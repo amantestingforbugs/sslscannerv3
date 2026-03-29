@@ -11,13 +11,14 @@ How it works:
   6. Falls back to simulation mode if subfinder binary not found
 """
 
-import subprocess
+import json
+import logging
 import shutil
+import subprocess
 import threading
 import time
-import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 from core.observability import log_event
 
 log = logging.getLogger(__name__)
@@ -27,41 +28,77 @@ _sf_lock = threading.Lock()
 _sf_state = {}  # project_id -> {status, job_id, new_count}
 
 
+def _resolve_subfinder_bin() -> Optional[str]:
+    path = shutil.which("subfinder")
+    if path:
+        return path
+    fallback = "/usr/local/bin/subfinder"
+    return fallback if Path(fallback).exists() else None
+
+
 def subfinder_available() -> bool:
-    return Path(SUBFINDER_BIN).exists() if SUBFINDER_BIN else False
+    return bool(_resolve_subfinder_bin())
 
 
-def _run_subfinder_process(domains: List[str], timeout: int = 300) -> List[str]:
-    """
-    Execute subfinder binary and return discovered hostnames.
-    Returns empty list if binary not found or times out.
-    """
-    if not subfinder_available():
-        log.warning("subfinder binary not found at %s. Install from: "
-                    "https://github.com/projectdiscovery/subfinder", SUBFINDER_BIN)
-        return []
-
-    domain_str = ",".join(domains)
-    cmd = [SUBFINDER_BIN, "-d", domain_str, "-silent", "-all", "-timeout", "30"]
-
+def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
+    subfinder_bin = _resolve_subfinder_bin()
+    if not subfinder_bin:
+        return {
+            "root_domain": root_domain,
+            "command": "subfinder -d <domain> -silent -all -timeout 30",
+            "status": "error",
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "subfinder binary not found in PATH or /usr/local/bin/subfinder",
+            "found": [],
+        }
+    cmd = [subfinder_bin, "-d", root_domain, "-silent", "-all", "-timeout", "30"]
+    command_str = " ".join(cmd)
+    log.info("Subfinder start: %s", command_str)
+    log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=command_str, status="running")
     try:
-        log.info("Running subfinder on: %s", domain_str)
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        raw_lines = [ln.strip().lower() for ln in result.stdout.splitlines() if ln.strip()]
+        found = sorted({ln for ln in raw_lines if "." in ln})
+        status = "done" if result.returncode == 0 else "error"
+        log.info(
+            "Subfinder finished root=%s exit_code=%s discovered=%d",
+            root_domain,
+            result.returncode,
+            len(found),
         )
-        found = [line.strip() for line in result.stdout.splitlines()
-                 if line.strip() and "." in line.strip()]
-        log.info("Subfinder found %d subdomains for %s", len(found), domain_str)
-        return found
+        return {
+            "root_domain": root_domain,
+            "command": command_str,
+            "status": status,
+            "exit_code": result.returncode,
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+            "found": found,
+        }
     except subprocess.TimeoutExpired:
-        log.error("Subfinder timed out for domains: %s", domain_str)
-        return []
+        msg = f"Subfinder timed out after {timeout}s for {root_domain}"
+        log.error(msg)
+        return {
+            "root_domain": root_domain,
+            "command": command_str,
+            "status": "timeout",
+            "exit_code": None,
+            "stdout": "",
+            "stderr": msg,
+            "found": [],
+        }
     except Exception as e:
         log.exception("Subfinder execution error: %s", e)
-        return []
+        return {
+            "root_domain": root_domain,
+            "command": command_str,
+            "status": "error",
+            "exit_code": None,
+            "stdout": "",
+            "stderr": str(e),
+            "found": [],
+        }
 
 
 def _extract_root_domains(hosts: List[str]) -> List[str]:
@@ -95,12 +132,9 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
     """
     from db.database import (
         project_get, project_hosts, subfinder_job_create, subfinder_job_finish,
-        subfinder_job_error, subfinder_hosts_add_batch, subfinder_hosts_new_unsscanned,
-        subfinder_hosts_mark_scanned, results_batch_save, scan_create, scan_finish,
-        alert_add, project_update
+        subfinder_job_error, subfinder_hosts_add_batch, subfinder_raw_result_add,
+        subfinder_raw_result_finish
     )
-    from core.ssl_checker import run_checker
-    from scheduler.runner import BATCH_SIZE, PROGRESS_UPDATE_EVERY, _scan_lock, _scan_state
 
     project = project_get(project_id)
     if not project:
@@ -117,6 +151,10 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         log_event("subfinder", "error", "Unable to extract root domain", project_id=project_id, status="failed")
         return None
 
+    if not subfinder_available():
+        log.warning("Subfinder binary not found. Checked PATH and /usr/local/bin/subfinder")
+        log_event("subfinder", "error", "Subfinder binary not found", project_id=project_id, status="failed")
+
     log.info("Subfinder starting for '%s' — domains: %s", project["name"], root_domains)
     log_event("subfinder", "info", "Subfinder started", project_id=project_id, domains=root_domains, status="running")
 
@@ -127,19 +165,42 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         _sf_state[project_id] = {"status": "running", "job_id": job_id, "new_count": 0}
 
     try:
-        # Run subfinder
-        discovered = _run_subfinder_process(root_domains)
+        discovered_all: List[str] = []
+        raw_records = []
+        for root_domain in root_domains:
+            raw_id = subfinder_raw_result_add(
+                job_id=job_id,
+                project_id=project_id,
+                root_domain=root_domain,
+                command=f"subfinder -d {root_domain} -silent -all -timeout 30",
+            )
+            run = _run_subfinder_for_root(root_domain)
+            raw_records.append({k: v for k, v in run.items() if k != "found"})
+            discovered_all.extend(run["found"])
+            subfinder_raw_result_finish(
+                raw_id,
+                run["status"],
+                run["exit_code"],
+                len(run["found"]),
+                run["stdout"],
+                run["stderr"],
+            )
+
+        discovered = sorted(set(discovered_all))
+        new_count, new_hosts = subfinder_hosts_add_batch(project_id, discovered)
+
+        raw_dir = Path("data/subfinder_raw")
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        raw_output_path = raw_dir / f"{job_id}.json"
+        raw_output_path.write_text(json.dumps(raw_records, indent=2), encoding="utf-8")
+        subfinder_job_finish(job_id, new_count, len(discovered), str(raw_output_path))
 
         if not discovered:
-            subfinder_job_finish(job_id, 0, 0)
-            log_event("subfinder", "info", "Subfinder finished with no discoveries", project_id=project_id, job_id=job_id, status="idle")
+            log.warning("Subfinder returned 0 results — check sources/config")
+            log_event("subfinder", "warning", "Subfinder returned 0 results — check sources/config", project_id=project_id, job_id=job_id, status="idle")
             with _sf_lock:
                 _sf_state[project_id] = {"status": "done", "job_id": job_id, "new_count": 0}
             return job_id
-
-        # Store new hosts, get count of genuinely new ones
-        new_count = subfinder_hosts_add_batch(project_id, discovered)
-        subfinder_job_finish(job_id, new_count, len(discovered))
 
         with _sf_lock:
             _sf_state[project_id]["new_count"] = new_count
@@ -149,10 +210,9 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                  new_count, project["name"])
         log_event("subfinder", "info", f"Discovered {new_count} new hosts", project_id=project_id, job_id=job_id, status="running")
 
-        # SSL scan all unscanned subfinder hosts
-        unscanned = subfinder_hosts_new_unsscanned(project_id)
-        if unscanned:
-            _ssl_scan_subfinder_hosts(project_id, unscanned, job_id)
+        # SSL scan only NEW hosts from this run
+        if new_hosts:
+            _ssl_scan_subfinder_hosts(project_id, new_hosts, job_id)
 
         with _sf_lock:
             _sf_state[project_id]["status"] = "done"

@@ -74,10 +74,26 @@ def init_db():
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
         status TEXT DEFAULT 'running',
         domains_input TEXT DEFAULT '',
+        raw_output_path TEXT DEFAULT '',
         new_count INTEGER DEFAULT 0,
         total_found INTEGER DEFAULT 0,
         triggered_by TEXT DEFAULT 'scheduler',
         started_at TEXT NOT NULL, finished_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS subfinder_raw_results (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        root_domain TEXT NOT NULL,
+        command TEXT DEFAULT '',
+        status TEXT DEFAULT 'running',
+        exit_code INTEGER,
+        total_found INTEGER DEFAULT 0,
+        stdout_text TEXT DEFAULT '',
+        stderr_text TEXT DEFAULT '',
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(job_id) REFERENCES subfinder_jobs(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS subfinder_hosts (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
@@ -92,7 +108,15 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_scans_proj ON scans(project_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_dd ON alerts(dedup_key);
     CREATE INDEX IF NOT EXISTS idx_sfhosts_proj ON subfinder_hosts(project_id);
+    CREATE INDEX IF NOT EXISTS idx_sfraw_job ON subfinder_raw_results(job_id);
+    CREATE INDEX IF NOT EXISTS idx_sfraw_project ON subfinder_raw_results(project_id, started_at DESC);
     """)
+    # Lightweight migrations for existing DBs
+    try:
+        x("ALTER TABLE subfinder_jobs ADD COLUMN raw_output_path TEXT DEFAULT ''")
+        commit()
+    except sqlite3.OperationalError:
+        pass
     log.info("DB ready at %s", DB_PATH)
 
 
@@ -266,9 +290,9 @@ def subfinder_job_create(pid, domains_input, by="scheduler"):
     commit()
     return jid
 
-def subfinder_job_finish(jid, new_count, total_found):
-    x("UPDATE subfinder_jobs SET status='done',finished_at=?,new_count=?,total_found=? WHERE id=?",
-      (now(), new_count, total_found, jid))
+def subfinder_job_finish(jid, new_count, total_found, raw_output_path=""):
+    x("UPDATE subfinder_jobs SET status='done',finished_at=?,new_count=?,total_found=?,raw_output_path=? WHERE id=?",
+      (now(), new_count, total_found, raw_output_path or "", jid))
     commit()
 
 def subfinder_job_error(jid, msg):
@@ -281,18 +305,24 @@ def subfinder_jobs_list(pid, limit=20):
         (pid, limit))]
 
 def subfinder_hosts_add_batch(pid, hostnames):
-    """Insert new hostnames, ignore duplicates. Returns count of truly new ones."""
+    """Insert new hostnames, ignore duplicates. Returns (count, new_hostnames)."""
     n = now()
-    rows = [(uid(), pid, h, "subfinder", n, n) for h in hostnames]
-    before = x("SELECT COUNT(*) FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchone()[0]
+    deduped = sorted({(h or "").strip().lower() for h in hostnames if (h or "").strip()})
+    if not deduped:
+        return 0, []
+    existing = {
+        r["hostname"] for r in x(
+            f"SELECT hostname FROM subfinder_hosts WHERE project_id=? AND hostname IN ({','.join(['?']*len(deduped))})",
+            [pid, *deduped]
+        ).fetchall()
+    }
+    new_hosts = [h for h in deduped if h not in existing]
+    rows = [(uid(), pid, h, "subfinder", n, n) for h in deduped]
     xm("INSERT OR IGNORE INTO subfinder_hosts(id,project_id,hostname,source,first_seen,last_seen)"
        " VALUES(?,?,?,?,?,?)", rows)
-    # Update last_seen for existing ones
-    xm("UPDATE subfinder_hosts SET last_seen=? WHERE project_id=? AND hostname=?",
-       [(n, pid, h) for h in hostnames])
+    xm("UPDATE subfinder_hosts SET last_seen=? WHERE project_id=? AND hostname=?", [(n, pid, h) for h in deduped])
     commit()
-    after = x("SELECT COUNT(*) FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchone()[0]
-    return after - before
+    return len(new_hosts), new_hosts
 
 def subfinder_hosts_new_unsscanned(pid):
     """Hostnames discovered by subfinder but not yet SSL-scanned."""
@@ -364,6 +394,45 @@ def subfinder_discoveries(pid, page=1, per_page=200, search=""):
         "page": page,
         "pages": max(1, (total + per_page - 1) // per_page),
     }
+
+
+def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_at=None):
+    rid = uid()
+    x(
+        "INSERT INTO subfinder_raw_results(id,job_id,project_id,root_domain,command,status,started_at)"
+        " VALUES(?,?,?,?,?,'running',?)",
+        (rid, job_id, project_id, root_domain, command, started_at or now()),
+    )
+    commit()
+    return rid
+
+
+def subfinder_raw_result_finish(
+    rid,
+    status,
+    exit_code,
+    total_found,
+    stdout_text,
+    stderr_text,
+):
+    x(
+        "UPDATE subfinder_raw_results SET status=?,exit_code=?,total_found=?,stdout_text=?,stderr_text=?,finished_at=? WHERE id=?",
+        (status, exit_code, total_found, stdout_text, stderr_text, now(), rid),
+    )
+    commit()
+
+
+def subfinder_raw_results_list(pid, limit=20):
+    rows = x(
+        "SELECT * FROM subfinder_raw_results WHERE project_id=? ORDER BY started_at DESC LIMIT ?",
+        (pid, limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["raw_lines"] = [ln for ln in (d.get("stdout_text") or "").splitlines() if ln.strip()]
+        out.append(d)
+    return out
 
 
 # ── Global stats ──────────────────────────────────────────────────────────────

@@ -977,6 +977,16 @@ tbody tr:last-child td{border-bottom:none}
         </div>
 
         <div class="card">
+          <div class="card-header"><span class="card-title">Subfinder Raw Results</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Domain Scanned</th><th>Timestamp</th><th>Total Found</th><th>Status</th><th>Raw Output</th></tr></thead>
+              <tbody id="sf-raw-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-header">
             <span class="card-title">Discovered Hosts</span>
             <span id="sf-hosts-count" style="font-size:12px;color:var(--text-muted)"></span>
@@ -1782,6 +1792,7 @@ async function refreshSfPanel() {
   try {
     const { data: st } = await fetch(`/api/projects/${sfCurPid}/subfinder/status`).then(r=>r.json());
     const { data: hostsData } = await fetch(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=500`).then(r=>r.json());
+    const { data: rawRuns } = await fetch(`/api/projects/${sfCurPid}/subfinder/raw-results?limit=50`).then(r=>r.json());
 
     // State
     const state = st?.state||{};
@@ -1804,6 +1815,20 @@ async function refreshSfPanel() {
         <td style="color:var(--green);font-weight:600">${fmt(j.new_count)}</td>
         <td>${fmt(j.total_found)}</td></tr>`).join('')+'</tbody></table></div>':
       '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div>';
+
+    // Raw results table
+    document.getElementById('sf-raw-body').innerHTML = (rawRuns||[]).length ? (rawRuns||[]).map(rr => {
+      const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_text || '—');
+      return `<tr>
+        <td style="font-family:var(--mono);font-size:12px">${esc(rr.root_domain)}</td>
+        <td style="font-size:12px;color:var(--text-secondary)">${new Date(rr.started_at).toLocaleString()}</td>
+        <td style="font-weight:600">${fmt(rr.total_found||0)}</td>
+        <td><span class="badge ${rr.status==='done'?'badge-done':rr.status==='running'?'badge-running':'badge-error'}">${esc(rr.status||'unknown')}</span></td>
+        <td style="max-width:520px">
+          <pre style="white-space:pre-wrap;overflow:auto;max-height:140px;font-size:11px;background:var(--bg-raised);padding:8px;border:1px solid var(--border);border-radius:8px">${esc(rawList)}</pre>
+        </td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="5" style="text-align:center;padding:18px;color:var(--text-muted)">No raw subfinder runs yet.</td></tr>';
 
     // Stats
     document.getElementById('sf-total').textContent = fmt(hostsData?.total||0);
