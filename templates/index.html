@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SSL Sentinel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ════════════════════════════════════════════════════════════
+   DESIGN TOKENS — dark/light via data-theme attribute
+════════════════════════════════════════════════════════════ */
+:root {
+  --radius: 10px;
+  --radius-sm: 6px;
+  --transition: 0.18s ease;
+  --font: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+  --sidebar-w: 230px;
+  --header-h: 60px;
+}
+
+[data-theme="dark"] {
+  --bg-base:    #0f1117;
+  --bg-surface: #161b27;
+  --bg-raised:  #1c2236;
+  --bg-hover:   #222840;
+  --border:     #2a3150;
+  --border-subtle: #1e2740;
+  --text-primary: #e8edf8;
+  --text-secondary: #8b9bbf;
+  --text-muted:  #4a5578;
+  --accent:      #4f7cff;
+  --accent-dim:  rgba(79,124,255,0.12);
+  --red:         #f04f60;
+  --red-dim:     rgba(240,79,96,0.12);
+  --green:       #34d399;
+  --green-dim:   rgba(52,211,153,0.1);
+  --amber:       #fbbf24;
+  --amber-dim:   rgba(251,191,36,0.1);
+  --orange:      #fb923c;
+  --orange-dim:  rgba(251,146,60,0.1);
+  --purple:      #a78bfa;
+  --purple-dim:  rgba(167,139,250,0.1);
+  --shadow:      0 4px 24px rgba(0,0,0,0.4);
+  --shadow-sm:   0 2px 8px rgba(0,0,0,0.3);
+}
+
+[data-theme="light"] {
+  --bg-base:    #f4f6fb;
+  --bg-surface: #ffffff;
+  --bg-raised:  #f0f3fa;
+  --bg-hover:   #e8edf8;
+  --border:     #dde3f0;
+  --border-subtle: #eaeef8;
+  --text-primary: #111827;
+  --text-secondary: #4b5680;
+  --text-muted:  #9ba8c8;
+  --accent:      #3b6ff5;
+  --accent-dim:  rgba(59,111,245,0.1);
+  --red:         #e53e3e;
+  --red-dim:     rgba(229,62,62,0.08);
+  --green:       #059669;
+  --green-dim:   rgba(5,150,105,0.08);
+  --amber:       #d97706;
+  --amber-dim:   rgba(217,119,6,0.08);
+  --orange:      #ea580c;
+  --orange-dim:  rgba(234,88,12,0.08);
+  --purple:      #7c3aed;
+  --purple-dim:  rgba(124,58,237,0.08);
+  --shadow:      0 4px 24px rgba(0,0,0,0.08);
+  --shadow-sm:   0 2px 8px rgba(0,0,0,0.06);
+}
+
+/* ════════════════════════════════════════════════════════════
+   RESET & BASE
+════════════════════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg-base);color:var(--text-primary);font-family:var(--font);font-size:13.5px;line-height:1.5;transition:background var(--transition),color var(--transition)}
+a{text-decoration:none;color:inherit}
+button{cursor:pointer;font-family:inherit}
+
+/* ════════════════════════════════════════════════════════════
+   LAYOUT
+════════════════════════════════════════════════════════════ */
+.app{display:flex;height:100vh}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  width:var(--sidebar-w);min-width:var(--sidebar-w);
+  background:var(--bg-surface);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  transition:background var(--transition);
+  z-index:100;
+}
+
+.sidebar-logo{
+  padding:20px 18px 16px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+}
+
+.logo-mark{
+  width:32px;height:32px;border-radius:8px;
+  background:linear-gradient(135deg,#4f7cff,#a78bfa);
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff;flex-shrink:0;
+}
+
+.logo-text{font-weight:700;font-size:14px;color:var(--text-primary);letter-spacing:-.01em}
+.logo-sub{font-size:10px;color:var(--text-muted);margin-top:1px}
+
+.nav{flex:1;padding:12px 8px;overflow-y:auto}
+.nav-section{padding:6px 10px 4px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-top:8px}
+.nav-section:first-child{margin-top:0}
+
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:8px 10px;border-radius:var(--radius-sm);
+  color:var(--text-secondary);font-size:13px;font-weight:500;
+  cursor:pointer;transition:all var(--transition);
+  border:none;background:none;width:100%;text-align:left;
+}
+.nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:600}
+.nav-item svg{width:16px;height:16px;flex-shrink:0;opacity:.8}
+.nav-item.active svg{opacity:1}
+.nav-badge{
+  margin-left:auto;background:var(--red);color:#fff;
+  font-size:10px;font-weight:700;padding:2px 6px;
+  border-radius:10px;min-width:18px;text-align:center;
+}
+
+.sidebar-footer{
+  padding:12px 16px;border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:6px;
+}
+
+.scheduler-pill{
+  display:flex;align-items:center;gap:7px;
+  font-size:11px;color:var(--text-secondary);
+}
+
+.pulse{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--green);flex-shrink:0;
+  box-shadow:0 0 0 0 rgba(52,211,153,.5);
+  animation:pulse-ring 2s infinite;
+}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}70%{box-shadow:0 0 0 6px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+
+.sidebar-clock{font-size:10px;color:var(--text-muted);font-family:var(--mono)}
+
+/* ── MAIN ── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+
+/* ── TOPBAR ── */
+.topbar{
+  height:var(--header-h);background:var(--bg-surface);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 24px;gap:16px;
+  flex-shrink:0;
+}
+
+.topbar-title{font-size:16px;font-weight:700;color:var(--text-primary)}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+
+.alert-pill{
+  display:flex;align-items:center;gap:6px;
+  background:var(--red-dim);border:1px solid rgba(240,79,96,.25);
+  color:var(--red);padding:5px 12px;border-radius:20px;
+  font-size:12px;font-weight:600;cursor:pointer;
+  transition:all var(--transition);
+}
+.alert-pill:hover{background:rgba(240,79,96,.2)}
+.alert-pill.hidden{display:none}
+
+.theme-toggle{
+  width:34px;height:34px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--bg-raised);
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;cursor:pointer;transition:all var(--transition);
+  color:var(--text-secondary);
+}
+.theme-toggle:hover{background:var(--bg-hover);color:var(--text-primary)}
+
+/* ── CONTENT ── */
+.content{flex:1;overflow-y:auto;padding:24px}
+
+/* ════════════════════════════════════════════════════════════
+   PAGES
+════════════════════════════════════════════════════════════ */
+.page{display:none}.page.active{display:block}
+
+.page-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:24px;
+}
+.page-title{font-size:20px;font-weight:700;color:var(--text-primary)}
+.page-sub{font-size:13px;color:var(--text-secondary);margin-top:3px}
+
+/* ════════════════════════════════════════════════════════════
+   STAT CARDS
+════════════════════════════════════════════════════════════ */
+.stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+
+.stat-card{
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:18px;
+  position:relative;overflow:hidden;
+  transition:all var(--transition);
+}
+.stat-card:hover{transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+
+.stat-icon{
+  width:36px;height:36px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:17px;margin-bottom:12px;
+}
+
+.stat-value{font-size:26px;font-weight:700;color:var(--text-primary);line-height:1;margin-bottom:4px;font-variant-numeric:tabular-nums}
+.stat-label{font-size:12px;color:var(--text-secondary);font-weight:500}
+.stat-trend{font-size:11px;margin-top:6px;color:var(--text-muted)}
+
+.stat-card.blue .stat-icon{background:var(--accent-dim);color:var(--accent)}
+.stat-card.green .stat-icon{background:var(--green-dim);color:var(--green)}
+.stat-card.red .stat-icon{background:var(--red-dim);color:var(--red)}
+.stat-card.amber .stat-icon{background:var(--amber-dim);color:var(--amber)}
+.stat-card.orange .stat-icon{background:var(--orange-dim);color:var(--orange)}
+.stat-card.purple .stat-icon{background:var(--purple-dim);color:var(--purple)}
+
+/* Accent left bar */
+.stat-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}
+.stat-card.blue::before{background:var(--accent)}
+.stat-card.green::before{background:var(--green)}
+.stat-card.red::before{background:var(--red)}
+.stat-card.amber::before{background:var(--amber)}
+.stat-card.orange::before{background:var(--orange)}
+.stat-card.purple::before{background:var(--purple)}
+
+/* ════════════════════════════════════════════════════════════
+   CARDS
+════════════════════════════════════════════════════════════ */
+.card{
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius);margin-bottom:18px;overflow:hidden;
+  transition:background var(--transition);
+}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);
+}
+.card-title{font-size:13px;font-weight:600;color:var(--text-primary)}
+.card-actions{display:flex;gap:8px;align-items:center}
+.card-body{padding:18px}
+
+/* ════════════════════════════════════════════════════════════
+   BUTTONS
+════════════════════════════════════════════════════════════ */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:7px 14px;border-radius:var(--radius-sm);
+  font-family:var(--font);font-size:12.5px;font-weight:500;
+  border:1px solid var(--border);background:var(--bg-raised);
+  color:var(--text-secondary);cursor:pointer;
+  transition:all var(--transition);white-space:nowrap;
+}
+.btn:hover{background:var(--bg-hover);color:var(--text-primary);border-color:var(--border)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover{background:#3d6de8;border-color:#3d6de8;color:#fff}
+.btn-danger{border-color:rgba(240,79,96,.3);color:var(--red)}
+.btn-danger:hover{background:var(--red-dim)}
+.btn-success{border-color:rgba(52,211,153,.3);color:var(--green)}
+.btn-sm{padding:5px 10px;font-size:11.5px}
+.btn-icon{padding:6px;border-radius:var(--radius-sm);border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;transition:all var(--transition);display:inline-flex;align-items:center;justify-content:center}
+.btn-icon:hover{background:var(--bg-hover);color:var(--text-primary)}
+.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+
+/* ════════════════════════════════════════════════════════════
+   FORMS
+════════════════════════════════════════════════════════════ */
+.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.form-label{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.form-input{
+  background:var(--bg-base);border:1px solid var(--border);
+  color:var(--text-primary);font-family:var(--font);font-size:13px;
+  padding:9px 12px;border-radius:var(--radius-sm);outline:none;
+  transition:border-color var(--transition);width:100%;
+}
+.form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.form-input::placeholder{color:var(--text-muted)}
+select.form-input option{background:var(--bg-surface)}
+textarea.form-input{min-height:100px;resize:vertical;line-height:1.6;font-family:var(--mono);font-size:12px}
+.form-row{display:flex;gap:12px;align-items:flex-end}
+.form-row .form-group{flex:1;margin-bottom:0}
+.form-hint{font-size:11px;color:var(--text-muted);margin-top:3px}
+.form-toggle{display:flex;align-items:center;gap:10px;cursor:pointer}
+.toggle-switch{width:36px;height:20px;background:var(--border);border-radius:10px;position:relative;transition:background var(--transition);flex-shrink:0}
+.toggle-switch::after{content:'';position:absolute;width:14px;height:14px;background:#fff;border-radius:50%;top:3px;left:3px;transition:transform var(--transition)}
+.toggle-switch.on{background:var(--accent)}
+.toggle-switch.on::after{transform:translateX(16px)}
+
+/* ════════════════════════════════════════════════════════════
+   TABLE
+════════════════════════════════════════════════════════════ */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead th{
+  text-align:left;padding:10px 14px;
+  font-size:11px;font-weight:600;color:var(--text-secondary);
+  text-transform:uppercase;letter-spacing:.06em;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-raised);white-space:nowrap;
+  cursor:pointer;user-select:none;
+}
+thead th:hover{color:var(--text-primary)}
+thead th .sort-icon{opacity:.4;margin-left:4px;font-size:10px}
+thead th.sorted .sort-icon{opacity:1;color:var(--accent)}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border-subtle);vertical-align:middle;color:var(--text-primary)}
+tbody tr:hover td{background:var(--bg-hover)}
+tbody tr:last-child td{border-bottom:none}
+.row-mismatch td{background:rgba(240,79,96,.035)}
+.row-mismatch:hover td{background:rgba(240,79,96,.06)}
+
+/* Table search + filter bar */
+.table-toolbar{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 18px;border-bottom:1px solid var(--border);
+  background:var(--bg-raised);flex-wrap:wrap;
+}
+.search-input{
+  display:flex;align-items:center;gap:8px;
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:6px 10px;
+}
+.search-input input{background:none;border:none;outline:none;color:var(--text-primary);font-family:var(--font);font-size:12.5px;width:180px}
+.search-input input::placeholder{color:var(--text-muted)}
+
+/* Pagination */
+.pagination{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px;border-top:1px solid var(--border);
+  font-size:12px;color:var(--text-secondary);
+}
+.pagination-controls{display:flex;gap:6px}
+
+/* ════════════════════════════════════════════════════════════
+   BADGES
+════════════════════════════════════════════════════════════ */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px;border-radius:20px;
+  font-size:11px;font-weight:600;white-space:nowrap;
+}
+.badge-ok{background:var(--green-dim);color:var(--green)}
+.badge-mismatch{background:var(--red-dim);color:var(--red)}
+.badge-expired{background:var(--orange-dim);color:var(--orange)}
+.badge-expiring{background:var(--amber-dim);color:var(--amber)}
+.badge-error{background:var(--bg-raised);color:var(--text-muted);border:1px solid var(--border)}
+.badge-running{background:var(--green-dim);color:var(--green);animation:blink .9s step-end infinite}
+.badge-done{background:var(--accent-dim);color:var(--accent)}
+.badge-sf{background:var(--purple-dim);color:var(--purple)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* ════════════════════════════════════════════════════════════
+   FILTER TABS
+════════════════════════════════════════════════════════════ */
+.filter-tabs{display:flex;border-bottom:1px solid var(--border)}
+.filter-tab{
+  padding:9px 16px;font-size:12.5px;font-weight:500;
+  color:var(--text-secondary);cursor:pointer;
+  border-bottom:2px solid transparent;
+  transition:all var(--transition);white-space:nowrap;
+}
+.filter-tab:hover{color:var(--text-primary)}
+.filter-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+
+/* ════════════════════════════════════════════════════════════
+   PROGRESS BAR
+════════════════════════════════════════════════════════════ */
+.progress-wrap{background:var(--bg-raised);border-radius:4px;height:6px;overflow:hidden}
+.progress-bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:4px;transition:width .4s ease}
+.progress-label{font-size:11.5px;color:var(--text-secondary);margin-top:6px;display:flex;justify-content:space-between}
+
+/* ════════════════════════════════════════════════════════════
+   PROJECT CARDS GRID
+════════════════════════════════════════════════════════════ */
+.projects-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+
+.project-card{
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:18px;cursor:pointer;
+  transition:all var(--transition);position:relative;
+}
+.project-card:hover{border-color:var(--accent);box-shadow:var(--shadow-sm);transform:translateY(-1px)}
+.project-card.has-issues{border-left:3px solid var(--red)}
+.project-card.running{border-left:3px solid var(--green)}
+
+.proj-name{font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:6px}
+.proj-meta{font-size:11.5px;color:var(--text-secondary);display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.proj-badges{display:flex;gap:6px;flex-wrap:wrap}
+.proj-progress{margin-top:10px}
+
+/* ════════════════════════════════════════════════════════════
+   ALERTS
+════════════════════════════════════════════════════════════ */
+.alert-item{
+  display:flex;align-items:flex-start;gap:12px;
+  padding:14px 18px;border-bottom:1px solid var(--border-subtle);
+  transition:background var(--transition);cursor:pointer;
+}
+.alert-item:hover{background:var(--bg-hover)}
+.alert-item.unread{background:rgba(240,79,96,.03)}
+.alert-item:last-child{border-bottom:none}
+.alert-dot{font-size:8px;padding-top:5px;flex-shrink:0}
+.alert-host{font-weight:600;font-size:13px;color:var(--text-primary);margin-bottom:2px}
+.alert-desc{font-size:12px}
+.alert-desc.mismatch{color:var(--red)}
+.alert-desc.expired{color:var(--orange)}
+.alert-desc.expiring{color:var(--amber)}
+.alert-meta{font-size:11px;color:var(--text-muted);margin-top:3px}
+.alert-time{margin-left:auto;font-size:11px;color:var(--text-muted);white-space:nowrap;padding-top:2px}
+
+/* ════════════════════════════════════════════════════════════
+   DROPZONE
+════════════════════════════════════════════════════════════ */
+.dropzone{
+  border:2px dashed var(--border);border-radius:var(--radius);
+  padding:28px;text-align:center;cursor:pointer;
+  transition:all var(--transition);color:var(--text-muted);
+}
+.dropzone:hover,.dropzone.over{
+  border-color:var(--accent);background:var(--accent-dim);
+  color:var(--accent);
+}
+.dropzone-icon{font-size:26px;margin-bottom:8px}
+.dropzone p{font-size:12.5px}
+.dropzone .hint{font-size:11px;color:var(--text-muted);margin-top:4px}
+
+/* ════════════════════════════════════════════════════════════
+   MODAL
+════════════════════════════════════════════════════════════ */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.6);
+  backdrop-filter:blur(4px);display:none;
+  align-items:center;justify-content:center;z-index:1000;
+}
+.modal-overlay.open{display:flex}
+.modal{
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius);width:100%;max-width:500px;
+  box-shadow:var(--shadow);animation:modalIn .2s ease;
+}
+@keyframes modalIn{from{opacity:0;transform:scale(.96)translateY(-8px)}to{opacity:1;transform:none}}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-title{font-size:15px;font-weight:600;color:var(--text-primary)}
+.modal-close{font-size:18px;color:var(--text-muted);cursor:pointer;line-height:1;border:none;background:none;padding:2px 6px}
+.modal-close:hover{color:var(--text-primary)}
+.modal-body{padding:20px}
+.modal-footer{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+
+/* ════════════════════════════════════════════════════════════
+   TOAST
+════════════════════════════════════════════════════════════ */
+.toasts{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{
+  background:var(--bg-surface);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:11px 16px;
+  font-size:13px;min-width:260px;max-width:340px;
+  box-shadow:var(--shadow);animation:toastIn .25s ease;
+  display:flex;align-items:center;gap:10px;
+  border-left:3px solid var(--accent);
+}
+.toast.ok{border-left-color:var(--green)}
+.toast.err{border-left-color:var(--red)}
+@keyframes toastIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+
+/* ════════════════════════════════════════════════════════════
+   SCAN PROGRESS CARD
+════════════════════════════════════════════════════════════ */
+.scan-live-stats{display:flex;gap:24px;margin-top:14px;flex-wrap:wrap}
+.scan-stat{text-align:center}
+.scan-stat-val{font-size:20px;font-weight:700;color:var(--text-primary);font-variant-numeric:tabular-nums}
+.scan-stat-lbl{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+
+/* ════════════════════════════════════════════════════════════
+   SUBFINDER SECTION
+════════════════════════════════════════════════════════════ */
+.sf-banner{
+  background:var(--purple-dim);border:1px solid rgba(167,139,250,.25);
+  border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;
+  display:flex;align-items:center;gap:12px;
+}
+.sf-banner-icon{font-size:20px}
+.sf-banner p{font-size:12.5px;color:var(--text-secondary)}
+.sf-banner strong{color:var(--purple)}
+
+.sf-install-box{
+  background:var(--bg-raised);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:14px;margin-top:10px;
+  font-family:var(--mono);font-size:12px;color:var(--text-secondary);line-height:1.8;
+}
+
+/* ════════════════════════════════════════════════════════════
+   EMPTY STATE
+════════════════════════════════════════════════════════════ */
+.empty{text-align:center;padding:48px 20px;color:var(--text-muted)}
+.empty-icon{font-size:32px;margin-bottom:12px;opacity:.3}
+.empty-title{font-size:14px;font-weight:500;color:var(--text-secondary);margin-bottom:6px}
+.empty-desc{font-size:12.5px}
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE
+════════════════════════════════════════════════════════════ */
+@media(max-width:900px){
+  .stats-row{grid-template-columns:repeat(2,1fr)}
+  .sidebar{width:64px;min-width:64px}
+  .logo-text,.logo-sub,.nav-section,.nav-item span,.scheduler-pill span,.sidebar-clock{display:none}
+  .nav-item{justify-content:center;padding:10px}
+  .nav-item svg{width:20px;height:20px;opacity:1}
+}
+@media(max-width:600px){
+  .stats-row{grid-template-columns:1fr 1fr}
+  .content{padding:14px}
+  .modal{max-width:calc(100vw - 24px)}
+}
+
+/* ════════════════════════════════════════════════════════════
+   SCROLLBAR
+════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ════════════ SIDEBAR ════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">S</div>
+    <div>
+      <div class="logo-text">SSL Sentinel</div>
+      <div class="logo-sub">Certificate Monitor</div>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <div class="nav-section">Monitor</div>
+    <button class="nav-item active" data-page="dashboard">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Dashboard</span>
+    </button>
+    <button class="nav-item" data-page="projects">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+      <span>Projects</span>
+    </button>
+    <button class="nav-item" data-page="alerts">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 17h5l-1.4-1.4A2 2 0 0118 14V11a6 6 0 10-12 0v3a2 2 0 01-.6 1.4L4 17h5m6 0a3 3 0 01-6 0"/></svg>
+      <span>Alerts</span>
+      <span class="nav-badge" id="navAlertBadge" style="display:none">0</span>
+    </button>
+
+    <div class="nav-section">Tools</div>
+    <button class="nav-item" data-page="subfinder">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+      <span>Subfinder</span>
+    </button>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="scheduler-pill"><div class="pulse"></div><span>Scheduler active</span></div>
+    <div class="sidebar-clock" id="sideClock"></div>
+  </div>
+</aside>
+
+<!-- ════════════ MAIN ════════════ -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="topTitle">Dashboard</div>
+    <div class="topbar-right">
+      <div class="alert-pill hidden" id="alertPill" onclick="nav('alerts')">
+        🔔 <span id="pillCount">0</span> new alerts
+      </div>
+      <button class="theme-toggle" id="themeToggle" title="Toggle theme">🌙</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ══════ DASHBOARD ══════ -->
+    <div class="page active" id="page-dashboard">
+      <div class="stats-row">
+        <div class="stat-card blue">
+          <div class="stat-icon">📁</div>
+          <div class="stat-value" id="s-projects">—</div>
+          <div class="stat-label">Projects</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">✅</div>
+          <div class="stat-value" id="s-ok">—</div>
+          <div class="stat-label">Valid Certs</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-icon">❌</div>
+          <div class="stat-value" id="s-mis">—</div>
+          <div class="stat-label">Mismatches</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-icon">💀</div>
+          <div class="stat-value" id="s-exp">—</div>
+          <div class="stat-label">Expired</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-icon">⏳</div>
+          <div class="stat-value" id="s-expg">—</div>
+          <div class="stat-label">Expiring ≤30d</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Active Scans</span>
+          <button class="btn btn-sm btn-primary" onclick="nav('projects')">+ New Project</button>
+        </div>
+        <div id="dash-active-scans">
+          <div class="empty"><div class="empty-icon">⚡</div><div class="empty-title">No scans running</div><p class="empty-desc">Start a scan from any project.</p></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Recent Mismatches</span>
+          <button class="btn btn-sm" onclick="nav('projects')">All Projects →</button>
+        </div>
+        <div id="dash-mismatches">
+          <div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No mismatches detected</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ PROJECTS ══════ -->
+    <div class="page" id="page-projects">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Projects</div>
+          <div class="page-sub">Each project monitors a separate list of hosts</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('createModal')">+ New Project</button>
+      </div>
+      <div class="projects-grid" id="projects-grid">
+        <div class="empty" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No projects yet</div><p class="empty-desc">Create one to start monitoring.</p></div>
+      </div>
+    </div>
+
+    <!-- ══════ PROJECT DETAIL ══════ -->
+    <div class="page" id="page-detail">
+      <div class="page-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-sm" onclick="nav('projects')">← Back</button>
+          <div>
+            <div class="page-title" id="det-name">—</div>
+            <div class="page-sub" id="det-meta">—</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="doScan()">▶ Scan Now</button>
+          <button class="btn btn-sm" onclick="openEditModal()">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="delProject()">Delete</button>
+        </div>
+      </div>
+
+      <!-- Host upload -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+        <div class="card" style="margin-bottom:0">
+          <div class="card-header"><span class="card-title">Upload Host List</span></div>
+          <div class="card-body">
+            <div class="dropzone" id="dz" onclick="document.getElementById('fi').click()">
+              <div class="dropzone-icon">📂</div>
+              <p>Drop .txt file or click to browse</p>
+              <p class="hint">One hostname or URL per line</p>
+            </div>
+            <input type="file" id="fi" accept=".txt" style="display:none" onchange="uploadFile(this)">
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:0">
+          <div class="card-header"><span class="card-title">Paste Hosts</span></div>
+          <div class="card-body">
+            <textarea class="form-input" id="paste-hosts" placeholder="example.com&#10;api.example.com&#10;https://app.example.com"></textarea>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+              <span class="form-hint">Current: <strong id="host-count">0</strong> hosts</span>
+              <button class="btn btn-primary btn-sm" onclick="saveHosts()">Save Hosts</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan progress -->
+      <div class="card" id="scan-prog-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title">Scan in Progress</span>
+          <span class="badge badge-running" id="prog-badge">RUNNING</span>
+        </div>
+        <div class="card-body">
+          <div class="progress-wrap"><div class="progress-bar" id="prog-bar" style="width:0%"></div></div>
+          <div class="progress-label">
+            <span><span id="prog-done">0</span> / <span id="prog-total">0</span> hosts</span>
+            <span id="prog-pct" style="color:var(--accent);font-weight:600">0%</span>
+          </div>
+          <div class="scan-live-stats">
+            <div class="scan-stat"><div class="scan-stat-val" id="lv-ok" style="color:var(--green)">0</div><div class="scan-stat-lbl">Valid</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="lv-mis" style="color:var(--red)">0</div><div class="scan-stat-lbl">Mismatch</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="lv-exp" style="color:var(--orange)">0</div><div class="scan-stat-lbl">Expired</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="lv-expg" style="color:var(--amber)">0</div><div class="scan-stat-lbl">Expiring</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="lv-err" style="color:var(--text-muted)">0</div><div class="scan-stat-lbl">Errors</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan history -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Scan History</span></div>
+        <div id="scan-history"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No scans yet</div></div></div>
+      </div>
+
+      <!-- Results -->
+      <div class="card" id="results-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="results-title">Results</span>
+        </div>
+        <div class="filter-tabs" id="result-tabs">
+          <div class="filter-tab active" onclick="loadResults('all',this)">All</div>
+          <div class="filter-tab" onclick="loadResults('mismatch',this)">Mismatch</div>
+          <div class="filter-tab" onclick="loadResults('expired',this)">Expired</div>
+          <div class="filter-tab" onclick="loadResults('expiring',this)">Expiring</div>
+          <div class="filter-tab" onclick="loadResults('ok',this)">Valid</div>
+          <div class="filter-tab" onclick="loadResults('errors',this)">Errors</div>
+        </div>
+        <!-- Summary stats bar -->
+        <div id="results-stats" style="display:flex;gap:20px;padding:12px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap"></div>
+        <div class="table-toolbar">
+          <div class="search-input">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="res-search" placeholder="Filter hostname..." oninput="filterResTable()">
+          </div>
+          <span style="font-size:12px;color:var(--text-muted)" id="res-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
+              <th>Status</th>
+              <th onclick="sortTable('cn')">Certificate CN <span class="sort-icon">↕</span></th>
+              <th onclick="sortTable('expiry')">Expiry <span class="sort-icon">↕</span></th>
+              <th onclick="sortTable('days_left')">Days Left <span class="sort-icon">↕</span></th>
+              <th>Issuer</th>
+            </tr></thead>
+            <tbody id="res-body"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="res-pagination" style="display:none">
+          <span id="pag-info"></span>
+          <div class="pagination-controls">
+            <button class="btn btn-sm" id="pag-prev" onclick="changePage(-1)">← Prev</button>
+            <button class="btn btn-sm" id="pag-next" onclick="changePage(1)">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ ALERTS ══════ -->
+    <div class="page" id="page-alerts">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Alerts</div>
+          <div class="page-sub">Real-time notifications — no refresh needed</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="markAllSeen()">✓ Mark All Read</button>
+          <button class="btn btn-sm btn-danger" onclick="clearAlerts()">Clear All</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="alerts-body"><div class="empty"><div class="empty-icon">🔔</div><div class="empty-title">No alerts</div><p class="empty-desc">Alerts appear automatically when issues are detected.</p></div></div>
+      </div>
+    </div>
+
+    <!-- ══════ SUBFINDER ══════ -->
+    <div class="page" id="page-subfinder">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Subfinder Integration</div>
+          <div class="page-sub">Continuous subdomain discovery powered by ProjectDiscovery Subfinder</div>
+        </div>
+      </div>
+
+      <div class="sf-banner">
+        <div class="sf-banner-icon">🔍</div>
+        <div>
+          <p><strong>How it works:</strong> Subfinder discovers new subdomains from your project's root domains. New subdomains are stored, deduplicated, and automatically SSL-scanned.</p>
+          <p style="margin-top:4px">Runs <strong>every 30 minutes</strong> (configurable per project). Only <strong>new</strong> subdomains trigger SSL scans.</p>
+        </div>
+      </div>
+
+      <div id="sf-binary-warn" style="display:none" class="card">
+        <div class="card-body">
+          <p style="color:var(--amber);font-weight:600;margin-bottom:8px">⚠ Subfinder binary not found</p>
+          <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Install subfinder on your server for full functionality. Without it, the integration will log warnings but won't crash.</p>
+          <div class="sf-install-box">
+            # Install subfinder (Linux/ARM)<br>
+            go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest<br><br>
+            # Or download binary from:<br>
+            # https://github.com/projectdiscovery/subfinder/releases
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group" style="max-width:320px;margin-bottom:20px">
+        <label class="form-label">Select Project</label>
+        <select class="form-input" id="sf-project-select" onchange="loadSfProject()">
+          <option value="">— Choose a project —</option>
+        </select>
+      </div>
+
+      <div id="sf-project-panel" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+          <div class="stat-card purple">
+            <div class="stat-icon">🔍</div>
+            <div class="stat-value" id="sf-total">—</div>
+            <div class="stat-label">Total Discovered</div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-icon">✨</div>
+            <div class="stat-value" id="sf-new">—</div>
+            <div class="stat-label">New (Last Run)</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Subfinder Control</span>
+            <div class="card-actions">
+              <label class="form-toggle" id="sf-toggle-label">
+                <div class="toggle-switch" id="sf-toggle"></div>
+                <span style="font-size:12.5px;color:var(--text-secondary)">Auto-run enabled</span>
+              </label>
+              <button class="btn btn-primary btn-sm" onclick="runSfNow()">▶ Run Now</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="sf-status-bar" style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">Status: idle</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Job History</span></div>
+          <div id="sf-jobs"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Discovered Hosts</span>
+            <span id="sf-hosts-count" style="font-size:12px;color:var(--text-muted)"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hostname</th><th>First Seen</th><th>Last Seen</th><th>SSL Scanned</th></tr></thead>
+              <tbody id="sf-hosts-body"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="sf-pagination" style="display:none">
+            <span id="sf-pag-info"></span>
+            <div class="pagination-controls">
+              <button class="btn btn-sm" id="sf-pag-prev" onclick="changeSfPage(-1)">← Prev</button>
+              <button class="btn btn-sm" id="sf-pag-next" onclick="changeSfPage(1)">Next →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /app -->
+
+<!-- Create Project Modal -->
+<div class="modal-overlay" id="createModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">New Project</span>
+      <button class="modal-close" onclick="closeModal('createModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Project Name *</label>
+        <input class="form-input" type="text" id="cp-name" placeholder="e.g. production-hosts">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-input" type="text" id="cp-desc" placeholder="Optional">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">SSL Scan Interval (minutes)</label>
+          <input class="form-input" type="number" id="cp-scan-int" value="60" min="5">
+          <div class="form-hint">Auto-scan every N minutes</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfinder Interval (minutes)</label>
+          <input class="form-input" type="number" id="cp-sf-int" value="30" min="5">
+          <div class="form-hint">Discovery every N minutes</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('createModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createProject()">Create Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Project Modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Edit Project</span>
+      <button class="modal-close" onclick="closeModal('editModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ep-id">
+      <div class="form-group">
+        <label class="form-label">Project Name</label>
+        <input class="form-input" type="text" id="ep-name">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-input" type="text" id="ep-desc">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">SSL Scan Interval (min)</label>
+          <input class="form-input" type="number" id="ep-scan-int" min="5">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfinder Interval (min)</label>
+          <input class="form-input" type="number" id="ep-sf-int" min="5">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('editModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+let curPid = null, curSid = null, curFilter = 'all', curPage = 1, totalPages = 1;
+let allResRows = [], sortCol = null, sortDir = 1;
+let scanPollTimer = null;
+let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
+
+// ════════════════════════════════════════════════════════════
+// THEME
+// ════════════════════════════════════════════════════════════
+const THEME_KEY = 'sentinel-theme';
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem(THEME_KEY, t);
+  document.getElementById('themeToggle').textContent = t === 'dark' ? '☀️' : '🌙';
+}
+document.getElementById('themeToggle').addEventListener('click', () => {
+  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+});
+setTheme(localStorage.getItem(THEME_KEY) || 'dark');
+
+// ════════════════════════════════════════════════════════════
+// CLOCK
+// ════════════════════════════════════════════════════════════
+function tick() {
+  const s = new Date().toUTCString().slice(0,25)+' UTC';
+  document.getElementById('sideClock').textContent = s;
+}
+setInterval(tick,1000); tick();
+
+// ════════════════════════════════════════════════════════════
+// NAVIGATION
+// ════════════════════════════════════════════════════════════
+const PAGE_TITLES = {
+  dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
+  alerts:'Alerts', subfinder:'Subfinder'
+};
+
+function nav(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const pg = document.getElementById('page-'+name);
+  if (pg) pg.classList.add('active');
+  const ni = document.querySelector(`[data-page="${name}"]`);
+  if (ni) ni.classList.add('active');
+  document.getElementById('topTitle').textContent = PAGE_TITLES[name] || name;
+  if (name==='dashboard') loadDash();
+  if (name==='projects') loadProjects();
+  if (name==='alerts') loadAlerts();
+  if (name==='subfinder') initSfPage();
+}
+
+document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+  el.addEventListener('click', () => nav(el.dataset.page));
+});
+
+// ════════════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════════════
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const fmt = n => (n||0).toLocaleString();
+
+function rel(iso) {
+  if (!iso) return '—';
+  const d = Math.floor((Date.now()-new Date(iso))/1000);
+  return d<60?`${d}s ago`:d<3600?`${Math.floor(d/60)}m ago`:d<86400?`${Math.floor(d/3600)}h ago`:`${Math.floor(d/86400)}d ago`;
+}
+
+function sbadge(r) {
+  if (r.error&&!r.is_mismatch&&!r.is_expired&&!r.is_expiring&&!r.is_ok)
+    return '<span class="badge badge-error">error</span>';
+  if (r.is_expired) return '<span class="badge badge-expired">expired</span>';
+  if (r.is_mismatch) return '<span class="badge badge-mismatch">mismatch</span>';
+  if (r.is_expiring) return '<span class="badge badge-expiring">expiring</span>';
+  return '<span class="badge badge-ok">valid</span>';
+}
+
+function daysColor(d) {
+  if (d==null) return 'var(--text-muted)';
+  return d<0?'var(--red)':d<=30?'var(--amber)':'var(--green)';
+}
+
+// ════════════════════════════════════════════════════════════
+// TOAST
+// ════════════════════════════════════════════════════════════
+function toast(msg, type='') {
+  const icon = type==='ok'?'✅':type==='err'?'❌':'ℹ️';
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${icon}</span><span>${esc(msg)}</span>`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL
+// ════════════════════════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+window.addEventListener('click', e => {
+  if (e.target.classList.contains('modal-overlay')) e.target.classList.remove('open');
+});
+
+// ════════════════════════════════════════════════════════════
+// SSE — Real-time updates (fixes alert counter stale bug)
+// ════════════════════════════════════════════════════════════
+function connectSSE() {
+  const es = new EventSource('/api/sse');
+
+  es.addEventListener('connected', () => console.log('SSE connected'));
+
+  es.addEventListener('alert_update', e => {
+    const d = JSON.parse(e.data);
+    updateAlertBadge(d.unseen_count);
+    // If alerts page is open, reload it
+    if (document.getElementById('page-alerts').classList.contains('active')) {
+      loadAlerts();
+    }
+  });
+
+  es.addEventListener('scan_update', e => {
+    const s = JSON.parse(e.data);
+    // Update scan progress if we're watching this project
+    if (s.project_id === curPid) {
+      updateScanProgress(s);
+    }
+    // Refresh dashboard active scans section
+    if (document.getElementById('page-dashboard').classList.contains('active')) {
+      refreshActiveScans();
+    }
+  });
+
+  es.addEventListener('stats_update', e => {
+    const s = JSON.parse(e.data);
+    applyStat(s);
+  });
+
+  es.addEventListener('project_created', () => {
+    if (document.getElementById('page-projects').classList.contains('active')) loadProjects();
+  });
+
+  es.onerror = () => {
+    // Reconnect after 3s
+    setTimeout(connectSSE, 3000);
+    es.close();
+  };
+}
+connectSSE();
+
+// ════════════════════════════════════════════════════════════
+// ALERT BADGE
+// ════════════════════════════════════════════════════════════
+function updateAlertBadge(n) {
+  const pill = document.getElementById('alertPill');
+  const badge = document.getElementById('navAlertBadge');
+  const count = document.getElementById('pillCount');
+  if (n > 0) {
+    pill.classList.remove('hidden');
+    badge.style.display = '';
+    badge.textContent = n;
+    count.textContent = n;
+  } else {
+    pill.classList.add('hidden');
+    badge.style.display = 'none';
+  }
+}
+
+// Poll badge every 30s as SSE fallback
+async function pollBadge() {
+  try {
+    const { data: s } = await fetch('/api/stats').then(r => r.json());
+    updateAlertBadge(s?.unseen_alerts || 0);
+  } catch {}
+}
+setInterval(pollBadge, 30000); pollBadge();
+
+// ════════════════════════════════════════════════════════════
+// DASHBOARD
+// ════════════════════════════════════════════════════════════
+function applyStat(s) {
+  if (!s) return;
+  document.getElementById('s-projects').textContent = fmt(s.projects);
+  document.getElementById('s-ok').textContent = fmt(s.ok);
+  document.getElementById('s-mis').textContent = fmt(s.mismatches);
+  document.getElementById('s-exp').textContent = fmt(s.expired);
+  document.getElementById('s-expg').textContent = fmt(s.expiring);
+}
+
+async function loadDash() {
+  try {
+    const { data: s } = await fetch('/api/stats').then(r => r.json());
+    applyStat(s);
+  } catch {}
+  refreshActiveScans();
+  loadDashMismatches();
+}
+
+async function refreshActiveScans() {
+  try {
+    const { data: scans } = await fetch('/api/active-scans').then(r => r.json());
+    const el = document.getElementById('dash-active-scans');
+    if (!scans?.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">⚡</div><div class="empty-title">No scans running</div></div>';
+      return;
+    }
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Project</th><th style="min-width:220px">Progress</th><th>Checked</th></tr></thead><tbody>`+
+      scans.map(s => {
+        const pct = s.total>0?Math.round(s.progress/s.total*100):0;
+        return `<tr><td style="font-weight:500">${esc(s.project_name)}</td>
+          <td><div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
+              <div class="progress-label"><span>${fmt(s.progress)}/${fmt(s.total)}</span><span>${pct}%</span></div></td>
+          <td><span class="badge badge-running">RUNNING</span></td></tr>`;
+      }).join('')+`</tbody></table></div>`;
+  } catch {}
+}
+
+async function loadDashMismatches() {
+  try {
+    const el = document.getElementById('dash-mismatches');
+    const { data: projs } = await fetch('/api/projects').then(r => r.json());
+    const rows = [];
+    for (const p of (projs||[]).slice(0,3)) {
+      if (!p.latest_scan?.mismatches) continue;
+      const resp = await fetch(`/api/scans/${p.latest_scan.id}/results?filter=mismatch&per_page=5&page=1`).then(r=>r.json());
+      (resp.data?.results||[]).forEach(r => rows.push({...r, pname: p.name}));
+    }
+    if (!rows.length) {
+      el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No mismatches detected</div></div>';
+      return;
+    }
+    el.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Project</th><th>Hostname</th><th>Status</th><th>CN</th><th>Expiry</th></tr></thead><tbody>`+
+      rows.map(r=>`<tr class="row-mismatch">
+        <td style="color:var(--text-secondary);font-size:12px">${esc(r.pname)}</td>
+        <td style="font-weight:500">${esc(r.hostname)}</td>
+        <td>${sbadge(r)}</td>
+        <td style="color:var(--text-secondary);font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.cn)}</td>
+        <td style="font-size:12px">${r.expiry||'—'}</td></tr>`).join('')+
+      `</tbody></table></div>`;
+  } catch {}
+}
+
+setInterval(() => {
+  if (document.getElementById('page-dashboard').classList.contains('active')) loadDash();
+}, 60000);
+
+// ════════════════════════════════════════════════════════════
+// PROJECTS
+// ════════════════════════════════════════════════════════════
+async function loadProjects() {
+  try {
+    const { data: projs } = await fetch('/api/projects').then(r => r.json());
+    const el = document.getElementById('projects-grid');
+    if (!projs?.length) {
+      el.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No projects yet</div><p class="empty-desc">Create a project to start monitoring.</p></div>';
+      return;
+    }
+    el.innerHTML = projs.map(p => {
+      const s = p.latest_scan;
+      const hasMis = s?.mismatches>0;
+      const isRun = s?.status==='running';
+      return `<div class="project-card ${hasMis?'has-issues':''} ${isRun?'running':''}" onclick="openProject('${p.id}')">
+        <div class="proj-name">${esc(p.name)}</div>
+        <div class="proj-meta">
+          <span>📋 ${fmt(p.host_count)} hosts</span>
+          <span>⏱ Every ${p.scan_interval_minutes}min</span>
+          <span>🕐 ${s?rel(s.finished_at||s.started_at):'Never'}</span>
+        </div>
+        <div class="proj-badges">
+          ${s?`
+          <span class="badge badge-ok">✓ ${fmt(s.ok)}</span>
+          ${s.mismatches>0?`<span class="badge badge-mismatch">✗ ${fmt(s.mismatches)}</span>`:''}
+          ${s.expired>0?`<span class="badge badge-expired">! ${fmt(s.expired)}</span>`:''}
+          ${s.expiring>0?`<span class="badge badge-expiring">⏳ ${fmt(s.expiring)}</span>`:''}
+          ${isRun?`<span class="badge badge-running">RUNNING</span>`:''}
+          `:`<span style="font-size:11px;color:var(--text-muted)">No scan data yet</span>`}
+        </div>
+        ${isRun&&s?`<div class="proj-progress" onclick="event.stopPropagation();openProject('${p.id}')">
+          <div class="progress-wrap" style="margin-top:8px"><div class="progress-bar" style="width:${s.total>0?Math.round(s.done/s.total*100):0}%"></div></div>
+        </div>`:''}
+      </div>`;
+    }).join('');
+  } catch { toast('Failed to load projects','err'); }
+}
+
+async function createProject() {
+  const name = document.getElementById('cp-name').value.trim();
+  const desc = document.getElementById('cp-desc').value.trim();
+  const scan_interval = parseInt(document.getElementById('cp-scan-int').value)||60;
+  const subfinder_interval = parseInt(document.getElementById('cp-sf-int').value)||30;
+  if (!name) { toast('Name is required','err'); return; }
+  try {
+    const { data: p, ok, error } = await fetch('/api/projects',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name,description:desc,scan_interval,subfinder_interval})
+    }).then(r=>r.json());
+    if (!ok) { toast(error,'err'); return; }
+    closeModal('createModal');
+    document.getElementById('cp-name').value='';
+    document.getElementById('cp-desc').value='';
+    toast('Project created','ok');
+    openProject(p.id);
+  } catch { toast('Error creating project','err'); }
+}
+
+// ════════════════════════════════════════════════════════════
+// PROJECT DETAIL
+// ════════════════════════════════════════════════════════════
+async function openProject(pid) {
+  curPid = pid; nav('detail');
+  try {
+    const { data: p } = await fetch(`/api/projects/${pid}`).then(r=>r.json());
+    document.getElementById('det-name').textContent = p.name;
+    document.getElementById('det-meta').textContent =
+      `${fmt(p.host_count)} hosts · scan every ${p.scan_interval_minutes}min · subfinder every ${p.subfinder_interval_minutes}min`;
+    document.getElementById('host-count').textContent = fmt(p.host_count);
+    loadHistory(pid);
+    if (p.latest_scan?.status==='done') {
+      curSid = p.latest_scan.id;
+      showResults(p.latest_scan);
+    }
+    if (p.latest_scan?.status==='running') {
+      document.getElementById('scan-prog-card').style.display='';
+      startPoll();
+    }
+  } catch {}
+}
+
+async function delProject() {
+  if (!confirm('Delete this project and all its scan data?')) return;
+  await fetch(`/api/projects/${curPid}`,{method:'DELETE'});
+  toast('Project deleted','ok'); nav('projects');
+}
+
+function openEditModal() {
+  fetch(`/api/projects/${curPid}`).then(r=>r.json()).then(({data:p}) => {
+    document.getElementById('ep-id').value = p.id;
+    document.getElementById('ep-name').value = p.name;
+    document.getElementById('ep-desc').value = p.description||'';
+    document.getElementById('ep-scan-int').value = p.scan_interval_minutes||60;
+    document.getElementById('ep-sf-int').value = p.subfinder_interval_minutes||30;
+    openModal('editModal');
+  });
+}
+
+async function saveEdit() {
+  const pid = document.getElementById('ep-id').value;
+  const body = {
+    name: document.getElementById('ep-name').value.trim(),
+    description: document.getElementById('ep-desc').value.trim(),
+    scan_interval_minutes: parseInt(document.getElementById('ep-scan-int').value)||60,
+    subfinder_interval_minutes: parseInt(document.getElementById('ep-sf-int').value)||30,
+  };
+  const { ok, error } = await fetch(`/api/projects/${pid}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  if (!ok) { toast(error,'err'); return; }
+  closeModal('editModal');
+  toast('Project updated','ok');
+  openProject(pid);
+}
+
+// ════════════════════════════════════════════════════════════
+// HOSTS
+// ════════════════════════════════════════════════════════════
+async function uploadFile(input) {
+  const file = input.files[0]; if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  const { data, ok, error } = await fetch(`/api/projects/${curPid}/hosts`,{method:'POST',body:fd}).then(r=>r.json());
+  if (!ok) { toast(error,'err'); return; }
+  toast(`${fmt(data.count)} hosts saved`,'ok');
+  document.getElementById('host-count').textContent = fmt(data.count);
+}
+
+async function saveHosts() {
+  const text = document.getElementById('paste-hosts').value.trim();
+  if (!text) return;
+  const { data, ok, error } = await fetch(`/api/projects/${curPid}/hosts`,{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hosts:text})
+  }).then(r=>r.json());
+  if (!ok) { toast(error,'err'); return; }
+  toast(`${fmt(data.count)} hosts saved`,'ok');
+  document.getElementById('host-count').textContent = fmt(data.count);
+  document.getElementById('paste-hosts').value='';
+}
+
+const dz = document.getElementById('dz');
+dz.addEventListener('dragover', e=>{e.preventDefault();dz.classList.add('over')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+dz.addEventListener('drop', e=>{
+  e.preventDefault();dz.classList.remove('over');
+  const f=e.dataTransfer.files[0];
+  if(f){const i=document.getElementById('fi');try{const dt=new DataTransfer();dt.items.add(f);i.files=dt.files;}catch{}uploadFile(i);}
+});
+
+// ════════════════════════════════════════════════════════════
+// SCAN
+// ════════════════════════════════════════════════════════════
+async function doScan() {
+  const { ok, error } = await fetch(`/api/projects/${curPid}/scan`,{method:'POST'}).then(r=>r.json());
+  if (!ok) { toast(error,'err'); return; }
+  toast('Scan started!','ok');
+  document.getElementById('scan-prog-card').style.display='';
+  document.getElementById('results-card').style.display='none';
+  startPoll();
+}
+
+function startPoll() {
+  if (scanPollTimer) clearInterval(scanPollTimer);
+  scanPollTimer = setInterval(async () => {
+    try {
+      const { data: scans } = await fetch(`/api/projects/${curPid}/scans`).then(r=>r.json());
+      const run = (scans||[]).find(s=>s.status==='running');
+      const done = (scans||[]).find(s=>s.status==='done');
+      if (run) updateScanProgress(run);
+      if (!run && done) {
+        clearInterval(scanPollTimer);
+        curSid = done.id;
+        document.getElementById('scan-prog-card').style.display='none';
+        showResults(done);
+        loadHistory(curPid);
+        pollBadge();
+        toast(`Scan complete — ${fmt(done.mismatches)} mismatch(es)`, done.mismatches>0?'err':'ok');
+      }
+    } catch {}
+  }, 2500);
+}
+
+function updateScanProgress(s) {
+  const pct = s.total>0?Math.round((s.done||s.live_progress||s.progress||0)/s.total*100):0;
+  const done = s.done||s.live_progress||s.progress||0;
+  document.getElementById('prog-bar').style.width = pct+'%';
+  document.getElementById('prog-done').textContent = fmt(done);
+  document.getElementById('prog-total').textContent = fmt(s.total);
+  document.getElementById('prog-pct').textContent = pct+'%';
+  document.getElementById('lv-ok').textContent = fmt(s.ok);
+  document.getElementById('lv-mis').textContent = fmt(s.mismatches);
+  document.getElementById('lv-exp').textContent = fmt(s.expired);
+  document.getElementById('lv-expg').textContent = fmt(s.expiring);
+  document.getElementById('lv-err').textContent = fmt(s.errors);
+}
+
+// ════════════════════════════════════════════════════════════
+// RESULTS (paginated + sortable + searchable)
+// ════════════════════════════════════════════════════════════
+function showResults(scan) {
+  document.getElementById('results-card').style.display='';
+  document.getElementById('results-stats').innerHTML=`
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--accent)">${fmt(scan.total)}</div><div class="scan-stat-lbl">Total</div></div>
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--green)">${fmt(scan.ok)}</div><div class="scan-stat-lbl">Valid</div></div>
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--red)">${fmt(scan.mismatches)}</div><div class="scan-stat-lbl">Mismatch</div></div>
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--orange)">${fmt(scan.expired)}</div><div class="scan-stat-lbl">Expired</div></div>
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--amber)">${fmt(scan.expiring)}</div><div class="scan-stat-lbl">Expiring</div></div>
+    <div class="scan-stat"><div class="scan-stat-val" style="color:var(--text-muted)">${fmt(scan.errors)}</div><div class="scan-stat-lbl">Errors</div></div>`;
+  loadResults('all', document.querySelector('#result-tabs .filter-tab'));
+}
+
+async function loadResults(filter, tabEl, page) {
+  curFilter=filter; curPage=page||1;
+  document.querySelectorAll('#result-tabs .filter-tab').forEach(t=>t.classList.remove('active'));
+  if (tabEl) tabEl.classList.add('active');
+  if (!curSid) return;
+  try {
+    const resp = await fetch(`/api/scans/${curSid}/results?filter=${filter}&page=${curPage}&per_page=500`).then(r=>r.json());
+    const d = resp.data||{};
+    allResRows = d.results||[];
+    totalPages = d.pages||1;
+    document.getElementById('res-count').textContent = `${fmt(d.total)} results`;
+    renderResTable(allResRows);
+    renderResPagination(d);
+  } catch {}
+}
+
+function sortTable(col) {
+  if (sortCol===col) sortDir*=-1; else { sortCol=col; sortDir=1; }
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sorted');
+    const si = th.querySelector('.sort-icon');
+    if (si) si.textContent='↕';
+  });
+  const headers = document.querySelectorAll('thead th');
+  const colMap = ['hostname','','cn','expiry','days_left','issuer'];
+  const idx = colMap.indexOf(col);
+  if (idx>=0 && headers[idx]) {
+    headers[idx].classList.add('sorted');
+    const si = headers[idx].querySelector('.sort-icon');
+    if (si) si.textContent = sortDir>0?'↑':'↓';
+  }
+  const sorted = [...allResRows].sort((a,b) => {
+    const av = a[col]??'', bv = b[col]??'';
+    if (typeof av==='number') return (av-bv)*sortDir;
+    return String(av).localeCompare(String(bv))*sortDir;
+  });
+  renderResTable(sorted);
+}
+
+function filterResTable() {
+  const q = document.getElementById('res-search').value.toLowerCase();
+  renderResTable(q ? allResRows.filter(r=>(r.hostname||'').toLowerCase().includes(q)) : allResRows);
+}
+
+function renderResTable(rows) {
+  const body = document.getElementById('res-body');
+  if (!rows.length) {
+    body.innerHTML='<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted)">No entries for this filter.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => {
+    let sans=[];
+    try{sans=typeof r.sans==='string'?JSON.parse(r.sans):r.sans||[];}catch{}
+    const sansStr=sans.slice(0,2).join(', ')+(sans.length>2?` +${sans.length-2}`:'');
+    return `<tr class="${r.is_mismatch?'row-mismatch':''}">
+      <td><div style="font-weight:500;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.hostname)}">${esc(r.hostname)}</div>
+          ${sansStr?`<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(sansStr)}</div>`:''}</td>
+      <td>${sbadge(r)}</td>
+      <td style="font-size:12px;color:var(--text-secondary);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.cn||r.error||'—')}</td>
+      <td style="font-size:12px">${r.expiry||'—'}</td>
+      <td style="font-weight:600;color:${daysColor(r.days_left)};font-variant-numeric:tabular-nums">${r.days_left??'—'}</td>
+      <td style="font-size:11px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.issuer||'—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderResPagination(d) {
+  const el = document.getElementById('res-pagination');
+  if (d.pages<=1) { el.style.display='none'; return; }
+  el.style.display='flex';
+  document.getElementById('pag-info').textContent=`Page ${d.page} of ${d.pages} (${fmt(d.total)} total)`;
+  document.getElementById('pag-prev').disabled = d.page<=1;
+  document.getElementById('pag-next').disabled = d.page>=d.pages;
+}
+
+function changePage(dir) {
+  const np = curPage+dir;
+  if (np<1||np>totalPages) return;
+  loadResults(curFilter, null, np);
+}
+
+async function loadHistory(pid) {
+  try {
+    const { data: scans } = await fetch(`/api/projects/${pid}/scans`).then(r=>r.json());
+    const el = document.getElementById('scan-history');
+    if (!scans?.length) {
+      el.innerHTML='<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No scans yet</div></div>';
+      return;
+    }
+    el.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Status</th><th>Total</th><th>Mismatches</th><th>Expired</th><th>Trigger</th><th></th></tr></thead><tbody>`+
+      scans.map(s=>`<tr>
+        <td style="font-size:12px;color:var(--text-secondary)">${s.finished_at?new Date(s.finished_at).toLocaleString():rel(s.started_at)}</td>
+        <td><span class="badge ${s.status==='done'?'badge-done':s.status==='running'?'badge-running':'badge-error'}">${s.status}</span></td>
+        <td>${fmt(s.total)}</td>
+        <td style="color:${s.mismatches>0?'var(--red)':'var(--text-primary)'}">${fmt(s.mismatches)}</td>
+        <td style="color:${s.expired>0?'var(--orange)':'var(--text-primary)'}">${fmt(s.expired)}</td>
+        <td style="font-size:11px;color:var(--text-muted)">${s.triggered_by}</td>
+        <td><button class="btn btn-sm" onclick="viewScan('${s.id}',${JSON.stringify(s).replace(/"/g,'&quot;')})">View</button></td>
+      </tr>`).join('')+`</tbody></table></div>`;
+  } catch {}
+}
+
+function viewScan(sid, scan) {
+  curSid=sid; showResults(scan);
+  document.getElementById('results-card').scrollIntoView({behavior:'smooth'});
+}
+
+// ════════════════════════════════════════════════════════════
+// ALERTS
+// ════════════════════════════════════════════════════════════
+async function loadAlerts() {
+  try {
+    const { data: alerts } = await fetch('/api/alerts').then(r=>r.json());
+    const el = document.getElementById('alerts-body');
+    if (!alerts?.length) {
+      el.innerHTML='<div class="empty"><div class="empty-icon">🔔</div><div class="empty-title">No alerts</div></div>';
+      return;
+    }
+    const cls=t=>t.includes('Mismatch')?'mismatch':t.includes('Expir')?'expiring':'expired';
+    el.innerHTML=alerts.map(a=>`
+      <div class="alert-item ${a.seen?'':'unread'}" onclick="markOneSeen('${a.id}',this)">
+        <div class="alert-dot" style="color:${a.seen?'var(--text-muted)':'var(--red)'}">●</div>
+        <div style="flex:1;min-width:0">
+          <div class="alert-host">${esc(a.hostname)}</div>
+          <div class="alert-desc ${cls(a.issue_type)}">${esc(a.issue_type)} — ${esc(a.details)}</div>
+          <div class="alert-meta">Project: ${esc(a.project_name)}</div>
+        </div>
+        <div class="alert-time">${new Date(a.created_at).toLocaleString()}</div>
+      </div>`).join('');
+  } catch {}
+}
+
+async function markOneSeen(id, row) {
+  await fetch(`/api/alerts/${id}/read`,{method:'POST'});
+  row.classList.remove('unread');
+  row.querySelector('.alert-dot').style.color='var(--text-muted)';
+  pollBadge();
+}
+
+async function markAllSeen() {
+  await fetch('/api/alerts/seen',{method:'POST'});
+  // SSE will fire and update badge immediately
+  toast('All alerts marked as read','ok');
+  loadAlerts();
+}
+
+async function clearAlerts() {
+  if (!confirm('Clear all alerts?')) return;
+  await fetch('/api/alerts/clear',{method:'POST'});
+  // SSE fires alert_update with count=0 → badge resets immediately
+  toast('Alerts cleared','ok');
+  loadAlerts();
+}
+
+// ════════════════════════════════════════════════════════════
+// SUBFINDER
+// ════════════════════════════════════════════════════════════
+async function initSfPage() {
+  const sel = document.getElementById('sf-project-select');
+  const { data: projs } = await fetch('/api/projects').then(r=>r.json());
+  sel.innerHTML='<option value="">— Choose a project —</option>'+
+    (projs||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+
+  // Check binary
+  try {
+    const { data: st } = await fetch(`/api/projects/${projs?.[0]?.id||'x'}/subfinder/status`).then(r=>r.json());
+    document.getElementById('sf-binary-warn').style.display = st?.binary_available?'none':'';
+  } catch {}
+}
+
+async function loadSfProject() {
+  const pid = document.getElementById('sf-project-select').value;
+  sfCurPid = pid;
+  if (!pid) { document.getElementById('sf-project-panel').style.display='none'; return; }
+  document.getElementById('sf-project-panel').style.display='';
+  sfCurPage=1; sfTotalPages=1;
+  refreshSfPanel();
+}
+
+async function refreshSfPanel() {
+  if (!sfCurPid) return;
+  try {
+    const { data: st } = await fetch(`/api/projects/${sfCurPid}/subfinder/status`).then(r=>r.json());
+    const { data: hostsData } = await fetch(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=500`).then(r=>r.json());
+
+    // State
+    const state = st?.state||{};
+    const statusText = {running:'🔄 Running…',ssl_scanning:'🔒 SSL scanning new hosts…',done:'✅ Idle',error:'❌ Last run failed','':'🕐 Idle'}[state.status||'']||'—';
+    document.getElementById('sf-status-bar').textContent = `Status: ${statusText}`;
+
+    // Toggle
+    const toggle = document.getElementById('sf-toggle');
+    const { data: proj } = await fetch(`/api/projects/${sfCurPid}`).then(r=>r.json());
+    toggle.className = 'toggle-switch'+(proj?.subfinder_enabled?' on':'');
+    document.getElementById('sf-toggle-label').onclick = () => toggleSf(sfCurPid);
+
+    // Jobs
+    const jobs = st?.jobs||[];
+    document.getElementById('sf-jobs').innerHTML = jobs.length?
+      `<div class="table-wrap"><table><thead><tr><th>Started</th><th>Status</th><th>New Hosts</th><th>Total Found</th></tr></thead><tbody>`+
+      jobs.map(j=>`<tr>
+        <td style="font-size:12px">${new Date(j.started_at).toLocaleString()}</td>
+        <td><span class="badge ${j.status==='done'?'badge-done':j.status==='running'?'badge-running':'badge-error'}">${j.status}</span></td>
+        <td style="color:var(--green);font-weight:600">${fmt(j.new_count)}</td>
+        <td>${fmt(j.total_found)}</td></tr>`).join('')+'</tbody></table></div>':
+      '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div>';
+
+    // Stats
+    document.getElementById('sf-total').textContent = fmt(hostsData?.total||0);
+    const lastJob = jobs.find(j=>j.status==='done');
+    document.getElementById('sf-new').textContent = lastJob ? fmt(lastJob.new_count) : '—';
+
+    // Hosts table
+    const hosts = hostsData?.hosts||[];
+    sfTotalPages = hostsData?.pages||1;
+    document.getElementById('sf-hosts-count').textContent = `${fmt(hostsData?.total||0)} hosts`;
+    document.getElementById('sf-hosts-body').innerHTML = hosts.map(h=>`<tr>
+      <td style="font-weight:500;font-family:var(--mono);font-size:12px">${esc(h.hostname)}</td>
+      <td style="font-size:12px;color:var(--text-secondary)">${new Date(h.first_seen).toLocaleDateString()}</td>
+      <td style="font-size:12px;color:var(--text-secondary)">${new Date(h.last_seen).toLocaleDateString()}</td>
+      <td>${h.ssl_scanned?'<span class="badge badge-ok">✓ Yes</span>':'<span class="badge badge-error">Pending</span>'}</td>
+    </tr>`).join('');
+
+    // SF pagination
+    const sfPag = document.getElementById('sf-pagination');
+    if (hostsData?.pages>1) {
+      sfPag.style.display='flex';
+      document.getElementById('sf-pag-info').textContent=`Page ${sfCurPage} of ${hostsData.pages}`;
+      document.getElementById('sf-pag-prev').disabled = sfCurPage<=1;
+      document.getElementById('sf-pag-next').disabled = sfCurPage>=hostsData.pages;
+    } else sfPag.style.display='none';
+
+  } catch {}
+}
+
+async function runSfNow() {
+  if (!sfCurPid) return;
+  const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
+  if (!ok) { toast(error,'err'); return; }
+  toast(data?.binary_found ? 'Subfinder started' : 'Subfinder started (binary not found — check install)','ok');
+  setTimeout(refreshSfPanel, 2000);
+}
+
+async function toggleSf(pid) {
+  const { ok, data } = await fetch(`/api/projects/${pid}/subfinder/toggle`,{method:'PUT'}).then(r=>r.json());
+  if (!ok) return;
+  const toggle = document.getElementById('sf-toggle');
+  toggle.className = 'toggle-switch'+(data?.subfinder_enabled?' on':'');
+  toast(`Subfinder auto-run ${data?.subfinder_enabled?'enabled':'disabled'}`,'ok');
+}
+
+function changeSfPage(dir) {
+  const np = sfCurPage+dir;
+  if (np<1||np>sfTotalPages) return;
+  sfCurPage=np; refreshSfPanel();
+}
+
+// Poll subfinder status when on that page
+setInterval(() => {
+  if (document.getElementById('page-subfinder').classList.contains('active') && sfCurPid) {
+    refreshSfPanel();
+  }
+}, 8000);
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+loadDash();
+</script>
+</body>
+</html>

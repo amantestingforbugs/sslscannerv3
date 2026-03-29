@@ -1,0 +1,5 @@
+flask>=2.3.0
+cryptography>=40.0.0
+idna>=3.4
+tldextract>=3.4.0
+gunicorn>=21.0.0
