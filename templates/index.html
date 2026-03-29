@@ -21,16 +21,16 @@
 }
 
 [data-theme="dark"] {
-  --bg-base:    #0f1117;
-  --bg-surface: #161b27;
-  --bg-raised:  #1c2236;
-  --bg-hover:   #222840;
-  --border:     #2a3150;
-  --border-subtle: #1e2740;
-  --text-primary: #e8edf8;
-  --text-secondary: #8b9bbf;
-  --text-muted:  #4a5578;
-  --accent:      #4f7cff;
+  --bg-base:    #0f1115;
+  --bg-surface: #151922;
+  --bg-raised:  #1a1f2b;
+  --bg-hover:   #1e2432;
+  --border:     #252c3b;
+  --border-subtle: #1d2432;
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted:  #6b7280;
+  --accent:      #4f46e5;
   --accent-dim:  rgba(79,124,255,0.12);
   --red:         #f04f60;
   --red-dim:     rgba(240,79,96,0.12);
@@ -47,17 +47,17 @@
 }
 
 [data-theme="light"] {
-  --bg-base:    #f4f6fb;
+  --bg-base:    #f8fafc;
   --bg-surface: #ffffff;
-  --bg-raised:  #f0f3fa;
-  --bg-hover:   #e8edf8;
-  --border:     #dde3f0;
-  --border-subtle: #eaeef8;
+  --bg-raised:  #f1f5f9;
+  --bg-hover:   #eef2ff;
+  --border:     #e2e8f0;
+  --border-subtle: #edf2f7;
   --text-primary: #111827;
-  --text-secondary: #4b5680;
-  --text-muted:  #9ba8c8;
-  --accent:      #3b6ff5;
-  --accent-dim:  rgba(59,111,245,0.1);
+  --text-secondary: #475569;
+  --text-muted:  #94a3b8;
+  --accent:      #4f46e5;
+  --accent-dim:  rgba(79,70,229,0.1);
   --red:         #e53e3e;
   --red-dim:     rgba(229,62,62,0.08);
   --green:       #059669;
@@ -204,7 +204,7 @@ button{cursor:pointer;font-family:inherit}
 /* ════════════════════════════════════════════════════════════
    STAT CARDS
 ════════════════════════════════════════════════════════════ */
-.stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
 
 .stat-card{
   background:var(--bg-surface);border:1px solid var(--border);
@@ -533,6 +533,34 @@ tbody tr:last-child td{border-bottom:none}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+
+/* Minimal SaaS dashboard overrides */
+.card,.stat-card,.project-card,.modal{box-shadow:none}
+.card,.stat-card,.project-card{border-radius:12px}
+.topbar{gap:12px}
+.topbar-right{gap:8px}
+.topbar-select{
+  min-width:220px;
+  background:var(--bg-raised);
+  border:1px solid var(--border);
+  color:var(--text-primary);
+  border-radius:8px;
+  padding:8px 12px;
+  font-size:12.5px;
+}
+.notif-btn{
+  width:34px;height:34px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg-raised);color:var(--text-secondary);
+  display:flex;align-items:center;justify-content:center;
+}
+.notif-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.logs-panel{
+  background:#0b1220;
+  color:#d1d5db;
+  border-radius:10px;
+  padding:12px 14px;
+  border:1px solid var(--border);
+}
 </style>
 </head>
 <body>
@@ -549,7 +577,6 @@ tbody tr:last-child td{border-bottom:none}
   </div>
 
   <nav class="nav">
-    <div class="nav-section">Monitor</div>
     <button class="nav-item active" data-page="dashboard">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>Dashboard</span>
@@ -563,15 +590,17 @@ tbody tr:last-child td{border-bottom:none}
       <span>Alerts</span>
       <span class="nav-badge" id="navAlertBadge" style="display:none">0</span>
     </button>
-    <button class="nav-item" data-page="discoveries">
-      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 4h14v4H5z"/><path d="M5 10h14v10H5z"/><path d="M9 14h6M9 18h4"/></svg>
-      <span>New Discoveries</span>
-    </button>
-
-    <div class="nav-section">Tools</div>
     <button class="nav-item" data-page="subfinder">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
       <span>Subfinder</span>
+    </button>
+    <button class="nav-item" data-page="logs">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Logs</span>
+    </button>
+    <button class="nav-item" data-page="settings">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.33 1V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-.33-1A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 3.3 17l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1-.33H2a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1-.33A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82L3.2 6.1A2 2 0 1 1 6 3.3l.06.06A1.65 1.65 0 0 0 8 3.6a1.65 1.65 0 0 0 1-.6 1.65 1.65 0 0 0 .33-1V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 .33 1 1.65 1.65 0 0 0 1 .6 1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 1 1 20.7 6l-.06.06A1.65 1.65 0 0 0 20.4 8c0 .39.14.76.4 1 .26.24.61.37 1 .37H22a2 2 0 1 1 0 4h-.09c-.39 0-.76.14-1 .4-.24.26-.37.61-.37 1z"/></svg>
+      <span>Settings</span>
     </button>
   </nav>
 
@@ -586,6 +615,10 @@ tbody tr:last-child td{border-bottom:none}
   <div class="topbar">
     <div class="topbar-title" id="topTitle">Dashboard</div>
     <div class="topbar-right">
+      <select id="topProjectSelect" class="topbar-select">
+        <option value="">All Projects</option>
+      </select>
+      <button class="notif-btn" title="Alerts" onclick="nav('alerts')">🔔</button>
       <div class="alert-pill hidden" id="alertPill" onclick="nav('alerts')">
         🔔 <span id="pillCount">0</span> new alerts
       </div>
@@ -599,29 +632,24 @@ tbody tr:last-child td{border-bottom:none}
     <div class="page active" id="page-dashboard">
       <div class="stats-row">
         <div class="stat-card blue">
-          <div class="stat-icon">📁</div>
+          <div class="stat-icon">🌐</div>
           <div class="stat-value" id="s-projects">—</div>
-          <div class="stat-label">Projects</div>
+          <div class="stat-label">Total Domains</div>
         </div>
         <div class="stat-card green">
           <div class="stat-icon">✅</div>
           <div class="stat-value" id="s-ok">—</div>
-          <div class="stat-label">Valid Certs</div>
+          <div class="stat-label">Active Domains</div>
         </div>
         <div class="stat-card red">
           <div class="stat-icon">❌</div>
           <div class="stat-value" id="s-mis">—</div>
           <div class="stat-label">Mismatches</div>
         </div>
-        <div class="stat-card orange">
-          <div class="stat-icon">💀</div>
-          <div class="stat-value" id="s-exp">—</div>
-          <div class="stat-label">Expired</div>
-        </div>
         <div class="stat-card amber">
-          <div class="stat-icon">⏳</div>
+          <div class="stat-icon">🔔</div>
           <div class="stat-value" id="s-expg">—</div>
-          <div class="stat-label">Expiring ≤30d</div>
+          <div class="stat-label">Alerts</div>
         </div>
       </div>
 
@@ -651,8 +679,42 @@ tbody tr:last-child td{border-bottom:none}
           <span id="dash-log-status" style="font-size:12px;color:var(--text-secondary)">Idle</span>
         </div>
         <div class="card-body" style="padding:0">
-          <div id="dash-logs" style="max-height:260px;overflow:auto;padding:12px 16px;font-family:var(--mono);font-size:12px;color:var(--text-secondary)">
+          <div id="dash-logs" class="logs-panel" style="max-height:260px;overflow:auto;font-family:var(--mono);font-size:12px">
             <div class="empty"><div class="empty-icon">📜</div><div class="empty-title">Waiting for logs</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-logs">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Logs</div>
+          <div class="page-sub">Real-time execution stream</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div id="logs-page-body" class="logs-panel" style="min-height:320px;max-height:520px;overflow:auto;font-family:var(--mono);font-size:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-settings">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Settings</div>
+          <div class="page-sub">UI preferences</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="form-group" style="max-width:360px">
+            <label class="form-label">Theme Mode</label>
+            <select class="form-input" id="settingsTheme" onchange="setTheme(this.value)">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
           </div>
         </div>
       </div>
@@ -1032,6 +1094,8 @@ function setTheme(t) {
   document.documentElement.dataset.theme = t;
   localStorage.setItem(THEME_KEY, t);
   document.getElementById('themeToggle').textContent = t === 'dark' ? '☀️' : '🌙';
+  const themeSel = document.getElementById('settingsTheme');
+  if (themeSel) themeSel.value = t;
 }
 document.getElementById('themeToggle').addEventListener('click', () => {
   setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -1052,7 +1116,7 @@ setInterval(tick,1000); tick();
 // ════════════════════════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
-  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries'
+  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', logs:'Logs', settings:'Settings'
 };
 
 function nav(name) {
@@ -1068,6 +1132,7 @@ function nav(name) {
   if (name==='alerts') loadAlerts();
   if (name==='subfinder') initSfPage();
   if (name==='discoveries') initDiscoveriesPage();
+  if (name==='logs') loadLogsPage();
 }
 
 document.querySelectorAll('.nav-item[data-page]').forEach(el => {
@@ -1203,11 +1268,11 @@ setInterval(pollBadge, 30000); pollBadge();
 // ════════════════════════════════════════════════════════════
 function applyStat(s) {
   if (!s) return;
-  document.getElementById('s-projects').textContent = fmt(s.projects);
+  const totalDomains = s.total_domains ?? s.domains ?? s.total ?? s.projects;
+  document.getElementById('s-projects').textContent = fmt(totalDomains);
   document.getElementById('s-ok').textContent = fmt(s.ok);
   document.getElementById('s-mis').textContent = fmt(s.mismatches);
-  document.getElementById('s-exp').textContent = fmt(s.expired);
-  document.getElementById('s-expg').textContent = fmt(s.expiring);
+  document.getElementById('s-expg').textContent = fmt(s.unseen_alerts ?? s.mismatches);
 }
 
 async function loadDash() {
@@ -1243,6 +1308,16 @@ function renderLogs(rows) {
     <span style="color:var(--purple)">(${esc(r.component)})</span>
     <span>${esc(r.message)}</span>
   </div>`).join('');
+  const logsPage = document.getElementById('logs-page-body');
+  if (logsPage) logsPage.innerHTML = el.innerHTML;
+}
+
+async function loadLogsPage() {
+  await loadLogs();
+  const logsPage = document.getElementById('logs-page-body');
+  if (logsPage && !logsPage.innerHTML.trim()) {
+    logsPage.innerHTML = '<div style="color:var(--text-muted)">Waiting for logs...</div>';
+  }
 }
 
 function appendLogRow(entry) {
@@ -1794,6 +1869,22 @@ async function initDiscoveriesPage() {
   loadDiscoveries();
 }
 
+async function hydrateTopProjectSelect() {
+  const sel = document.getElementById('topProjectSelect');
+  if (!sel) return;
+  try {
+    const { data: projs } = await fetch('/api/projects').then(r => r.json());
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">All Projects</option>' +
+      (projs || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (prev) sel.value = prev;
+  } catch {}
+}
+
+document.getElementById('topProjectSelect')?.addEventListener('change', (e) => {
+  if (e.target.value) openProject(e.target.value);
+});
+
 async function loadDiscoveries() {
   const pid = document.getElementById('nd-project-select').value;
   if (!pid) {
@@ -1828,6 +1919,7 @@ setInterval(() => {
 // INIT
 // ════════════════════════════════════════════════════════════
 loadDash();
+hydrateTopProjectSelect();
 </script>
 </body>
 </html>
