@@ -594,6 +594,10 @@ tbody tr:last-child td{border-bottom:none}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
       <span>Subfinder</span>
     </button>
+    <button class="nav-item" data-page="discoveries">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/><circle cx="7" cy="7" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="17" cy="17" r="1"/></svg>
+      <span>New Discoveries</span>
+    </button>
     <button class="nav-item" data-page="logs">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
       <span>Logs</span>
@@ -863,8 +867,8 @@ tbody tr:last-child td{border-bottom:none}
       </div>
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <input class="form-input" id="alerts-search" placeholder="Search hostname..." style="max-width:260px" oninput="renderAlerts()">
-          <select class="form-input" id="alerts-filter" style="max-width:260px" onchange="renderAlerts()">
+          <input class="form-input" id="alerts-search" placeholder="Search hostname..." style="max-width:260px" oninput="loadAlerts()">
+          <select class="form-input" id="alerts-filter" style="max-width:260px" onchange="loadAlerts()">
             <option value="all">All mismatches</option>
             <option value="same_domain">Same domain mismatch</option>
             <option value="different_domain">Different domain mismatch</option>
@@ -1036,8 +1040,8 @@ tbody tr:last-child td{border-bottom:none}
         </div>
         <div class="form-group">
           <label class="form-label">Subfinder Interval (minutes)</label>
-          <input class="form-input" type="number" id="cp-sf-int" value="30" min="5">
-          <div class="form-hint">Discovery every N minutes</div>
+          <input class="form-input" type="number" id="cp-sf-int" value="30" min="10" max="30">
+          <div class="form-hint">Discovery interval (10–30 minutes)</div>
         </div>
       </div>
     </div>
@@ -1072,7 +1076,7 @@ tbody tr:last-child td{border-bottom:none}
         </div>
         <div class="form-group">
           <label class="form-label">Subfinder Interval (min)</label>
-          <input class="form-input" type="number" id="ep-sf-int" min="5">
+          <input class="form-input" type="number" id="ep-sf-int" min="10" max="30">
         </div>
       </div>
     </div>
@@ -1704,7 +1708,9 @@ function viewScan(sid, scan) {
 // ════════════════════════════════════════════════════════════
 async function loadAlerts() {
   try {
-    const { data: alerts } = await fetch('/api/alerts').then(r=>r.json());
+    const q = encodeURIComponent((document.getElementById('alerts-search').value || '').trim());
+    const mismatch = encodeURIComponent(document.getElementById('alerts-filter').value || 'all');
+    const { data: alerts } = await fetch(`/api/alerts?search=${q}&mismatch_scope=${mismatch}`).then(r=>r.json());
     allAlerts = alerts || [];
     renderAlerts();
   } catch {}
@@ -1712,17 +1718,7 @@ async function loadAlerts() {
 
 function renderAlerts() {
   const el = document.getElementById('alerts-body');
-  const q = (document.getElementById('alerts-search').value || '').toLowerCase().trim();
-  const filter = document.getElementById('alerts-filter').value;
-  let filtered = allAlerts.filter(a => (a.hostname || '').toLowerCase().includes(q));
-  if (filter !== 'all') {
-    filtered = filtered.filter(a => {
-      if (!String(a.issue_type || '').includes('Mismatch')) return false;
-      const detail = String(a.details || '').toLowerCase();
-      return filter === 'same_domain' ? detail.includes('same domain') || detail.includes('base')
-        : !detail.includes('same domain') && !detail.includes('base');
-    });
-  }
+  let filtered = allAlerts;
   if (!filtered.length) {
     el.innerHTML='<div class="empty"><div class="empty-icon">🔔</div><div class="empty-title">No alerts for current filters</div></div>';
     return;
@@ -1917,7 +1913,7 @@ async function loadDiscoveries() {
     return;
   }
   const q = encodeURIComponent(document.getElementById('nd-search').value || '');
-  const { data } = await fetch(`/api/projects/${pid}/discoveries?search=${q}&page=1&per_page=500`).then(r => r.json());
+  const { data } = await fetch(`/api/projects/${pid}/discoveries?search=${q}&page=1&per_page=500&mode=latest`).then(r => r.json());
   const rows = data?.rows || [];
   document.getElementById('nd-count').textContent = `${fmt(data?.total || 0)} rows`;
   if (!rows.length) {
@@ -1937,6 +1933,9 @@ async function loadDiscoveries() {
 setInterval(() => {
   if (document.getElementById('page-subfinder').classList.contains('active') && sfCurPid) {
     refreshSfPanel();
+  }
+  if (document.getElementById('page-discoveries').classList.contains('active')) {
+    loadDiscoveries();
   }
 }, 8000);
 

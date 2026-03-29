@@ -224,7 +224,9 @@ def active_scans():
 
 @api.get("/alerts")
 def get_alerts():
-    return ok(db.alerts_get())
+    search = (request.args.get("search", "") or "").strip()
+    mismatch = (request.args.get("mismatch_scope", "all") or "all").strip()
+    return ok(db.alerts_get(search=search, mismatch_scope=mismatch))
 
 
 @api.post("/alerts/<aid>/read")
@@ -268,6 +270,8 @@ def list_logs():
 @api.post("/projects/<pid>/subfinder/run")
 def run_subfinder(pid):
     from subfinder.runner import run_subfinder_async, subfinder_available
+    if not pid or pid in {"undefined", "null"}:
+        return err("Please select a project before running scan")
     p = db.project_get(pid)
     if not p: return err("Project not found", 404)
     if not db.project_hosts(pid):
@@ -309,7 +313,8 @@ def project_discoveries(pid):
     page = max(1, int(request.args.get("page", 1)))
     per_page = min(1000, max(50, int(request.args.get("per_page", 200))))
     search = (request.args.get("search", "") or "").strip()
-    return ok(db.subfinder_discoveries(pid, page, per_page, search))
+    mode = (request.args.get("mode", "all") or "all").strip().lower()
+    return ok(db.subfinder_discoveries(pid, page, per_page, search, mode=mode))
 
 
 @api.put("/projects/<pid>/subfinder/toggle")

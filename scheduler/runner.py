@@ -70,12 +70,13 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
     def on_result(done, total_inner, r):
         hostname = r.get("hostname", "")
         if r.get("is_mismatch") and not r.get("error"):
-            alert_batch.append((hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname"))
+            mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
+            alert_batch.append((hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname", mismatch_scope))
         elif r.get("is_expired") and not r.get("error"):
-            alert_batch.append((hostname, "Expired", f"Expired {r.get('expiry','?')}"))
+            alert_batch.append((hostname, "Expired", f"Expired {r.get('expiry','?')}", ""))
         elif r.get("is_expiring_soon") and not r.get("error"):
             alert_batch.append((hostname, "Expiring Soon",
-                                f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)"))
+                                f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)", ""))
         with lock:
             result_batch.append(r)
             done_count[0] += 1
@@ -84,8 +85,8 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
                 batch = result_batch[:]
                 result_batch.clear()
                 results_batch_save(sid, project_id, batch)
-                for h, issue, detail in alert_batch:
-                    alert_add(project_id, h, issue, detail, sid)
+                for h, issue, detail, scope in alert_batch:
+                    alert_add(project_id, h, issue, detail, sid, mismatch_scope=scope)
                 alert_batch.clear()
             if cur % PROGRESS_UPDATE_EVERY == 0:
                 scan_progress(sid, cur)
@@ -99,8 +100,8 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
         with lock:
             if result_batch:
                 results_batch_save(sid, project_id, result_batch)
-            for h, issue, detail in alert_batch:
-                alert_add(project_id, h, issue, detail, sid)
+            for h, issue, detail, scope in alert_batch:
+                alert_add(project_id, h, issue, detail, sid, mismatch_scope=scope)
 
         scan_finish(sid)
         log_event("ssl_scan", "info", "Scan finished", project_id=project_id, scan_id=sid, total=total, status="idle")

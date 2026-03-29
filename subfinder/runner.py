@@ -13,6 +13,7 @@ How it works:
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import threading
@@ -101,24 +102,50 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
         }
 
 
-def _extract_root_domains(hosts: List[str]) -> List[str]:
-    """Extract unique root domains from a host list for subfinder to enumerate."""
+_HOST_RE = re.compile(r"^(?:\*\.)?(?=.{1,253}$)(?!-)[a-z0-9-]+(?:\.[a-z0-9-]+)+$", re.IGNORECASE)
+
+
+def _normalize_host(host: str) -> str:
+    h = (host or "").strip().lower().rstrip(".")
+    if h.startswith("http://") or h.startswith("https://"):
+        h = h.split("://", 1)[1].split("/", 1)[0]
+    return h
+
+
+def _extract_project_root_domain(hosts: List[str]) -> Optional[str]:
+    """
+    Extract exactly one registrable root domain from a host list.
+    Returns None when no valid root found.
+    Raises ValueError when multiple roots are present.
+    """
+    normalized = []
+    for raw in hosts:
+        h = _normalize_host(raw)
+        if not h or "." not in h:
+            continue
+        if ":" in h:
+            h = h.split(":", 1)[0]
+        if _HOST_RE.match(h):
+            normalized.append(h)
+
+    if not normalized:
+        return None
+
     try:
         import tldextract
-        domains = set()
-        for h in hosts:
-            e = tldextract.extract(h)
-            if e.domain and e.suffix:
-                domains.add(f"{e.domain}.{e.suffix}")
-        return list(domains)
+        roots = {
+            f"{ext.domain}.{ext.suffix}"
+            for ext in (tldextract.extract(h) for h in normalized)
+            if ext.domain and ext.suffix
+        }
     except ImportError:
-        # Fallback: take last two parts
-        domains = set()
-        for h in hosts:
-            parts = h.split(".")
-            if len(parts) >= 2:
-                domains.add(".".join(parts[-2:]))
-        return list(domains)
+        roots = {".".join(h.split(".")[-2:]) for h in normalized if len(h.split(".")) >= 2}
+
+    if not roots:
+        return None
+    if len(roots) > 1:
+        raise ValueError(f"Multiple root domains detected: {', '.join(sorted(roots))}")
+    return next(iter(roots))
 
 
 def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") -> Optional[str]:
@@ -146,8 +173,13 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         log_event("subfinder", "error", "No base hosts found for project", project_id=project_id, status="failed")
         return None
 
-    root_domains = _extract_root_domains(hosts)
-    if not root_domains:
+    try:
+        root_domain = _extract_project_root_domain(hosts)
+    except ValueError as ve:
+        log_event("subfinder", "error", str(ve), project_id=project_id, status="failed")
+        return None
+
+    if not root_domain:
         log_event("subfinder", "error", "Unable to extract root domain", project_id=project_id, status="failed")
         return None
 
@@ -155,36 +187,32 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         log.warning("Subfinder binary not found. Checked PATH and /usr/local/bin/subfinder")
         log_event("subfinder", "error", "Subfinder binary not found", project_id=project_id, status="failed")
 
-    log.info("Subfinder starting for '%s' — domains: %s", project["name"], root_domains)
-    log_event("subfinder", "info", "Subfinder started", project_id=project_id, domains=root_domains, status="running")
+    log.info("Subfinder starting for '%s' — root domain: %s", project["name"], root_domain)
+    log_event("subfinder", "info", "Subfinder started", project_id=project_id, root_domain=root_domain, status="running")
 
-    domain_input = ",".join(root_domains)
-    job_id = subfinder_job_create(project_id, domain_input, triggered_by)
+    job_id = subfinder_job_create(project_id, root_domain, triggered_by)
 
     with _sf_lock:
         _sf_state[project_id] = {"status": "running", "job_id": job_id, "new_count": 0}
 
     try:
-        discovered_all: List[str] = []
-        raw_records = []
-        for root_domain in root_domains:
-            raw_id = subfinder_raw_result_add(
-                job_id=job_id,
-                project_id=project_id,
-                root_domain=root_domain,
-                command=f"subfinder -d {root_domain} -silent -all -timeout 30",
-            )
-            run = _run_subfinder_for_root(root_domain)
-            raw_records.append({k: v for k, v in run.items() if k != "found"})
-            discovered_all.extend(run["found"])
-            subfinder_raw_result_finish(
-                raw_id,
-                run["status"],
-                run["exit_code"],
-                len(run["found"]),
-                run["stdout"],
-                run["stderr"],
-            )
+        raw_id = subfinder_raw_result_add(
+            job_id=job_id,
+            project_id=project_id,
+            root_domain=root_domain,
+            command=f"subfinder -d {root_domain} -silent -all -timeout 30",
+        )
+        run = _run_subfinder_for_root(root_domain)
+        raw_records = [{k: v for k, v in run.items() if k != "found"}]
+        discovered_all: List[str] = run["found"]
+        subfinder_raw_result_finish(
+            raw_id,
+            run["status"],
+            run["exit_code"],
+            len(run["found"]),
+            run["stdout"],
+            run["stderr"],
+        )
 
         discovered = sorted(set(discovered_all))
         new_count, new_hosts = subfinder_hosts_add_batch(project_id, discovered)
@@ -264,8 +292,9 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         scanned_hosts.append(hostname)
 
         if r.get("is_mismatch") and not r.get("error"):
+            mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
             alert_add(project_id, hostname, "SSL Mismatch",
-                      f"[Subfinder] CN '{r.get('cn','?')}' ≠ hostname", scan_id)
+                      f"[Subfinder] CN '{r.get('cn','?')}' ≠ hostname", scan_id, mismatch_scope=mismatch_scope)
         elif r.get("is_expired") and not r.get("error"):
             alert_add(project_id, hostname, "Expired",
                       f"[Subfinder] Expired {r.get('expiry','?')}", scan_id)
@@ -357,7 +386,8 @@ class SubfinderScheduler:
             if not p.get("enabled") or not p.get("subfinder_enabled"):
                 continue
             pid = p["id"]
-            interval_s = p.get("subfinder_interval_minutes", 30) * 60
+            interval_min = max(10, min(30, int(p.get("subfinder_interval_minutes", 30) or 30)))
+            interval_s = interval_min * 60
             if now_ts - self._last_run.get(pid, 0) >= interval_s:
                 self._last_run[pid] = now_ts
                 run_subfinder_async(pid, triggered_by="scheduler")

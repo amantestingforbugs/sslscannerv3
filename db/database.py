@@ -67,6 +67,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS alerts (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, scan_id TEXT DEFAULT '',
         hostname TEXT NOT NULL, issue_type TEXT NOT NULL, details TEXT DEFAULT '',
+        mismatch_scope TEXT DEFAULT '',
         dedup_key TEXT NOT NULL UNIQUE, sent INTEGER DEFAULT 0,
         seen INTEGER DEFAULT 0, created_at TEXT NOT NULL
     );
@@ -117,12 +118,18 @@ def init_db():
         commit()
     except sqlite3.OperationalError:
         pass
+    try:
+        x("ALTER TABLE alerts ADD COLUMN mismatch_scope TEXT DEFAULT ''")
+        commit()
+    except sqlite3.OperationalError:
+        pass
     log.info("DB ready at %s", DB_PATH)
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────
 
 def project_create(name, description="", scan_interval=60, subfinder_interval=30):
+    subfinder_interval = max(10, min(30, int(subfinder_interval or 30)))
     pid, n = uid(), now()
     x("INSERT INTO projects(id,name,description,scan_interval_minutes,subfinder_interval_minutes,created_at,updated_at)"
       " VALUES(?,?,?,?,?,?,?)", (pid, name, description, scan_interval, subfinder_interval, n, n))
@@ -141,6 +148,8 @@ def project_list():
     return [dict(r) for r in x("SELECT * FROM projects ORDER BY created_at DESC")]
 
 def project_update(pid, **kw):
+    if "subfinder_interval_minutes" in kw:
+        kw["subfinder_interval_minutes"] = max(10, min(30, int(kw["subfinder_interval_minutes"] or 30)))
     kw["updated_at"] = now()
     sets = ",".join(f"{k}=?" for k in kw)
     x(f"UPDATE projects SET {sets} WHERE id=?", [*kw.values(), pid])
@@ -243,20 +252,35 @@ def results_get(sid, flt="all", page=1, per_page=500):
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
-def alert_add(pid, hostname, issue, detail, scan_id=""):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    dedup = f"{pid}:{hostname}:{issue}:{today}"
-    if x("SELECT id FROM alerts WHERE dedup_key=?", (dedup,)).fetchone():
+def alert_add(pid, hostname, issue, detail, scan_id="", mismatch_scope=""):
+    host = (hostname or "").strip().lower()
+    dedup = f"{pid}:{host}:{issue}"
+    existing = x("SELECT id FROM alerts WHERE dedup_key=?", (dedup,)).fetchone()
+    if existing:
+        x("UPDATE alerts SET scan_id=?,details=?,mismatch_scope=?,created_at=?,seen=0,sent=0 WHERE id=?",
+          (scan_id, detail, mismatch_scope or "", now(), existing["id"]))
+        commit()
         return False
-    x("INSERT INTO alerts(id,project_id,scan_id,hostname,issue_type,details,dedup_key,created_at)"
-      " VALUES(?,?,?,?,?,?,?,?)", (uid(), pid, scan_id, hostname, issue, detail, dedup, now()))
+    x("INSERT INTO alerts(id,project_id,scan_id,hostname,issue_type,details,mismatch_scope,dedup_key,created_at)"
+      " VALUES(?,?,?,?,?,?,?,?,?)", (uid(), pid, scan_id, host, issue, detail, mismatch_scope or "", dedup, now()))
     commit()
     return True
 
-def alerts_get(limit=200):
+def alerts_get(limit=200, search="", mismatch_scope="all"):
+    clauses = ["1=1"]
+    params = []
+    if search:
+        clauses.append("LOWER(a.hostname) LIKE ?")
+        params.append(f"%{search.lower()}%")
+    if mismatch_scope in ("same_domain", "different_domain"):
+        clauses.append("a.mismatch_scope=?")
+        params.append(mismatch_scope)
+    where = " AND ".join(clauses)
+    params.append(limit)
     return [dict(r) for r in x(
         "SELECT a.*,p.name project_name FROM alerts a"
-        " JOIN projects p ON p.id=a.project_id ORDER BY a.created_at DESC LIMIT ?", (limit,))]
+        f" JOIN projects p ON p.id=a.project_id WHERE {where}"
+        " ORDER BY a.created_at DESC LIMIT ?", params)]
 
 def alerts_unseen_count():
     return x("SELECT COUNT(*) FROM alerts WHERE seen=0").fetchone()[0]
@@ -343,13 +367,20 @@ def subfinder_hosts_list(pid, page=1, per_page=500):
             "pages": max(1,(total+per_page-1)//per_page)}
 
 
-def subfinder_discoveries(pid, page=1, per_page=200, search=""):
+def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
     search_like = f"%{search.lower()}%"
     where = "WHERE h.project_id=?"
     params = [pid]
     if search:
         where += " AND LOWER(h.hostname) LIKE ?"
         params.append(search_like)
+    if mode == "latest":
+        where += (
+            " AND h.first_seen >= COALESCE(("
+            "SELECT MAX(started_at) FROM subfinder_jobs WHERE project_id=? AND status='done'"
+            "), h.first_seen)"
+        )
+        params.append(pid)
     total = x(f"SELECT COUNT(*) FROM subfinder_hosts h {where}", params).fetchone()[0]
     offset = (page - 1) * per_page
     rows = x(
