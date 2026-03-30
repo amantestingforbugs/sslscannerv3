@@ -305,7 +305,8 @@ def subfinder_hosts(pid):
 @api.get("/projects/<pid>/subfinder/raw-results")
 def subfinder_raw_results(pid):
     limit = min(100, max(1, int(request.args.get("limit", 20))))
-    return ok(db.subfinder_raw_results_list(pid, limit=limit))
+    preview_chars = min(12000, max(500, int(request.args.get("preview_chars", 4000))))
+    return ok(db.subfinder_raw_results_list(pid, limit=limit, preview_chars=preview_chars))
 
 
 @api.get("/projects/<pid>/discoveries")
