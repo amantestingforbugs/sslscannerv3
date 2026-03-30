@@ -871,7 +871,7 @@ tbody tr:last-child td{border-bottom:none}
       </div>
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <input class="form-input" id="alerts-search" placeholder="Search hostname..." style="max-width:260px" oninput="loadAlerts()">
+          <input class="form-input" id="alerts-search" placeholder="Search hostname..." style="max-width:260px">
           <select class="form-input" id="alerts-filter" style="max-width:260px" onchange="loadAlerts()">
             <option value="all">All mismatches</option>
             <option value="same_domain">Same domain mismatch</option>
@@ -898,7 +898,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="table-toolbar">
         <div class="search-input">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="nd-search" placeholder="Search discovered hostname..." oninput="loadDiscoveries()">
+          <input type="text" id="nd-search" placeholder="Search discovered hostname...">
         </div>
         <span id="nd-count" style="font-size:12px;color:var(--text-muted)">0 rows</span>
       </div>
@@ -1124,6 +1124,20 @@ let allResRows = [], sortCol = null, sortDir = 1;
 let scanPollTimer = null;
 let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [];
+let projectsCache = [];
+
+async function apiJSON(url, opts) {
+  const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
+  return resp.json();
+}
+
+function debounce(fn, wait=250) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
 
 // ════════════════════════════════════════════════════════════
 // THEME
@@ -1387,13 +1401,14 @@ async function refreshActiveScans() {
 async function loadDashMismatches() {
   try {
     const el = document.getElementById('dash-mismatches');
-    const { data: projs } = await fetch('/api/projects').then(r => r.json());
-    const rows = [];
-    for (const p of (projs||[]).slice(0,3)) {
-      if (!p.latest_scan?.mismatches) continue;
-      const resp = await fetch(`/api/scans/${p.latest_scan.id}/results?filter=mismatch&per_page=5&page=1`).then(r=>r.json());
-      (resp.data?.results||[]).forEach(r => rows.push({...r, pname: p.name}));
-    }
+    const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
+    const candidates = (projs || []).slice(0, 4).filter(p => p.latest_scan?.mismatches);
+    const responses = await Promise.all(candidates.map(p =>
+      apiJSON(`/api/scans/${p.latest_scan.id}/results?filter=mismatch&per_page=5&page=1`)
+        .then(resp => (resp.data?.results || []).map(r => ({ ...r, pname: p.name })))
+        .catch(() => [])
+    ));
+    const rows = responses.flat();
     if (!rows.length) {
       el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No mismatches detected</div></div>';
       return;
@@ -1418,7 +1433,8 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════
 async function loadProjects() {
   try {
-    const { data: projs } = await fetch('/api/projects').then(r => r.json());
+    const { data: projs } = await apiJSON('/api/projects');
+    projectsCache = projs || [];
     const el = document.getElementById('projects-grid');
     if (!projs?.length) {
       el.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No projects yet</div><p class="empty-desc">Create a project to start monitoring.</p></div>';
@@ -1789,7 +1805,7 @@ async function clearAlerts() {
 // ════════════════════════════════════════════════════════════
 async function initSfPage() {
   const sel = document.getElementById('sf-project-select');
-  const { data: projs } = await fetch('/api/projects').then(r=>r.json());
+  const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
   sel.innerHTML='<option value="">— Choose a project —</option>'+
     (projs||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
 
@@ -1812,9 +1828,12 @@ async function loadSfProject() {
 async function refreshSfPanel() {
   if (!sfCurPid) return;
   try {
-    const { data: st } = await fetch(`/api/projects/${sfCurPid}/subfinder/status`).then(r=>r.json());
-    const { data: hostsData } = await fetch(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=500`).then(r=>r.json());
-    const { data: rawRuns } = await fetch(`/api/projects/${sfCurPid}/subfinder/raw-results?limit=50`).then(r=>r.json());
+    const [{ data: st }, { data: hostsData }, { data: rawRuns }, { data: proj }] = await Promise.all([
+      apiJSON(`/api/projects/${sfCurPid}/subfinder/status`),
+      apiJSON(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=250`),
+      apiJSON(`/api/projects/${sfCurPid}/subfinder/raw-results?limit=20&preview_chars=3500`),
+      apiJSON(`/api/projects/${sfCurPid}`),
+    ]);
 
     // State
     const state = st?.state||{};
@@ -1823,7 +1842,6 @@ async function refreshSfPanel() {
 
     // Toggle
     const toggle = document.getElementById('sf-toggle');
-    const { data: proj } = await fetch(`/api/projects/${sfCurPid}`).then(r=>r.json());
     toggle.className = 'toggle-switch'+(proj?.subfinder_enabled?' on':'');
     document.getElementById('sf-toggle-label').onclick = () => toggleSf(sfCurPid);
 
@@ -1907,7 +1925,7 @@ function changeSfPage(dir) {
 // ════════════════════════════════════════════════════════════
 async function initDiscoveriesPage() {
   const sel = document.getElementById('nd-project-select');
-  const { data: projs } = await fetch('/api/projects').then(r => r.json());
+  const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
   const prev = sel.value;
   sel.innerHTML = '<option value="">— Choose a project —</option>' +
     (projs || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -1918,7 +1936,7 @@ async function initDiscoveriesPage() {
 
 async function initSfRawPage() {
   const sel = document.getElementById('sf-raw-project-select');
-  const { data: projs } = await fetch('/api/projects').then(r=>r.json());
+  const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
   sel.innerHTML='<option value="">— Choose a project —</option>'+
     (projs||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
 }
@@ -1947,7 +1965,8 @@ async function hydrateTopProjectSelect() {
   const sel = document.getElementById('topProjectSelect');
   if (!sel) return;
   try {
-    const { data: projs } = await fetch('/api/projects').then(r => r.json());
+    const { data: projs } = await apiJSON('/api/projects');
+    projectsCache = projs || [];
     const prev = sel.value;
     sel.innerHTML = '<option value="">All Projects</option>' +
       (projs || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -1997,6 +2016,8 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════
 loadDash();
 hydrateTopProjectSelect();
+document.getElementById('alerts-search')?.addEventListener('input', debounce(loadAlerts, 250));
+document.getElementById('nd-search')?.addEventListener('input', debounce(loadDiscoveries, 300));
 </script>
 </body>
 </html>

@@ -6,7 +6,7 @@ Exports BATCH_SIZE and PROGRESS_UPDATE_EVERY for use by subfinder module.
 import threading, time, logging
 from datetime import datetime, timezone
 from typing import Dict, Optional
-from core.observability import log_event
+from core.observability import log_event, publish
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
     from db.database import (
         project_get, project_hosts, scan_create, results_batch_save,
         scan_finish, scan_update, scan_progress,
-        alert_add, alerts_unsent, alert_mark_sent
+        alert_add, alerts_unsent, alert_mark_sent, alerts_unseen_count
     )
     from core.ssl_checker import run_checker
     from alerts.notifiers import AlertManager
@@ -69,15 +69,17 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
 
     def on_result(done, total_inner, r):
         hostname = r.get("hostname", "")
+        alert = None
         if r.get("is_mismatch") and not r.get("error"):
             mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
-            alert_batch.append((hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname", mismatch_scope))
+            alert = (hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname", mismatch_scope)
         elif r.get("is_expired") and not r.get("error"):
-            alert_batch.append((hostname, "Expired", f"Expired {r.get('expiry','?')}", ""))
+            alert = (hostname, "Expired", f"Expired {r.get('expiry','?')}", "")
         elif r.get("is_expiring_soon") and not r.get("error"):
-            alert_batch.append((hostname, "Expiring Soon",
-                                f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)", ""))
+            alert = (hostname, "Expiring Soon", f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)", "")
         with lock:
+            if alert:
+                alert_batch.append(alert)
             result_batch.append(r)
             done_count[0] += 1
             cur = done_count[0]
@@ -102,6 +104,7 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
                 results_batch_save(sid, project_id, result_batch)
             for h, issue, detail, scope in alert_batch:
                 alert_add(project_id, h, issue, detail, sid, mismatch_scope=scope)
+        publish("alert_update", {"unseen_count": alerts_unseen_count()})
 
         scan_finish(sid)
         log_event("ssl_scan", "info", "Scan finished", project_id=project_id, scan_id=sid, total=total, status="idle")

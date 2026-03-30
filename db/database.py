@@ -117,11 +117,13 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_res_mis   ON results(scan_id, is_mismatch);
     CREATE INDEX IF NOT EXISTS idx_scans_proj ON scans(project_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_dd ON alerts(dedup_key);
+    CREATE INDEX IF NOT EXISTS idx_alerts_seen_created ON alerts(seen, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sfhosts_proj ON subfinder_hosts(project_id);
     CREATE INDEX IF NOT EXISTS idx_sfraw_job ON subfinder_raw_results(job_id);
     CREATE INDEX IF NOT EXISTS idx_sfraw_project ON subfinder_raw_results(project_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sfnew_job ON subfinder_new_discoveries(job_id);
     CREATE INDEX IF NOT EXISTS idx_sfnew_project ON subfinder_new_discoveries(project_id, discovered_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_results_proj_host_checked ON results(project_id, hostname, checked_at DESC);
     """)
     # Lightweight migrations for existing DBs
     try:
@@ -472,7 +474,7 @@ def subfinder_raw_result_finish(
     commit()
 
 
-def subfinder_raw_results_list(pid, limit=20):
+def subfinder_raw_results_list(pid, limit=20, preview_chars=4000):
     rows = x(
         "SELECT * FROM subfinder_raw_results WHERE project_id=? ORDER BY started_at DESC LIMIT ?",
         (pid, limit),
@@ -480,7 +482,11 @@ def subfinder_raw_results_list(pid, limit=20):
     out = []
     for r in rows:
         d = dict(r)
-        d["raw_lines"] = [ln for ln in (d.get("stdout_text") or "").splitlines() if ln.strip()]
+        out_text = d.get("stdout_text") or ""
+        if preview_chars and len(out_text) > preview_chars:
+            out_text = out_text[:preview_chars] + "\n…truncated for UI performance…"
+        d["raw_preview"] = out_text
+        d["raw_lines"] = [ln for ln in out_text.splitlines() if ln.strip()][:250]
         out.append(d)
     return out
 
