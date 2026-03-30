@@ -186,7 +186,7 @@ def get_hosts(pid):
 def trigger_scan(pid):
     p = db.project_get(pid)
     if not p: return err("Project not found", 404)
-    if not db.project_hosts(pid):
+    if int(p.get("host_count") or 0) <= 0:
         return err("Upload a host list first")
     if not run_project_scan_async(pid, triggered_by="manual"):
         return err("A scan is already running for this project")

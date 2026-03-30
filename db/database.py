@@ -225,7 +225,12 @@ def project_create(name, description="", scan_interval=60, subfinder_interval=30
     return project_get(pid)
 
 def project_get(pid):
-    r = x("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    r = x(
+        "SELECT id,name,description,host_count,scan_interval_minutes,"
+        "subfinder_interval_minutes,subfinder_enabled,enabled,created_at,updated_at "
+        "FROM projects WHERE id=?",
+        (pid,),
+    ).fetchone()
     return dict(r) if r else None
 
 def project_get_by_name(name):
@@ -233,7 +238,14 @@ def project_get_by_name(name):
     return dict(r) if r else None
 
 def project_list():
-    return [dict(r) for r in x("SELECT * FROM projects ORDER BY created_at DESC")]
+    return [
+        dict(r)
+        for r in x(
+            "SELECT id,name,description,host_count,scan_interval_minutes,"
+            "subfinder_interval_minutes,subfinder_enabled,enabled,created_at,updated_at "
+            "FROM projects ORDER BY created_at DESC"
+        )
+    ]
 
 def project_update(pid, **kw):
     if "subfinder_interval_minutes" in kw:
@@ -250,10 +262,10 @@ def project_delete(pid):
     commit()
 
 def project_hosts(pid):
-    p = project_get(pid)
-    if not p or not p["hosts_file"]:
+    r = x("SELECT hosts_file FROM projects WHERE id=?", (pid,)).fetchone()
+    if not r or not r["hosts_file"]:
         return []
-    return [h.strip() for h in p["hosts_file"].splitlines() if h.strip()]
+    return [h.strip() for h in r["hosts_file"].splitlines() if h.strip()]
 
 def project_save_hosts(pid, hosts):
     project_update(pid, hosts_file="\n".join(hosts), host_count=len(hosts))
