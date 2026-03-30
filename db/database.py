@@ -141,6 +141,9 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_sfnew_job ON subfinder_new_discoveries(job_id);
     CREATE INDEX IF NOT EXISTS idx_sfnew_project ON subfinder_new_discoveries(project_id, discovered_at DESC);
     CREATE INDEX IF NOT EXISTS idx_results_proj_host_checked ON results(project_id, hostname, checked_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_scans_triggered_by ON scans(triggered_by);
+    CREATE INDEX IF NOT EXISTS idx_sfjobs_proj_started ON subfinder_jobs(project_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sfnew_proj_job_host ON subfinder_new_discoveries(project_id, job_id, hostname);
     """)
     # Lightweight migrations for existing DBs
     try:
@@ -486,9 +489,19 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
     search_like = f"%{search.lower()}%"
     if mode == "latest":
         where = "WHERE h.project_id=? AND EXISTS (SELECT 1 FROM subfinder_new_discoveries n WHERE n.project_id=h.project_id AND n.hostname=h.hostname)"
+        params = [pid]
+    elif mode == "last_job":
+        where = (
+            "WHERE h.project_id=? AND EXISTS ("
+            "SELECT 1 FROM subfinder_new_discoveries n "
+            "WHERE n.project_id=h.project_id AND n.hostname=h.hostname "
+            "AND n.job_id=(SELECT j.id FROM subfinder_jobs j WHERE j.project_id=? ORDER BY j.started_at DESC LIMIT 1)"
+            ")"
+        )
+        params = [pid, pid]
     else:
         where = "WHERE h.project_id=?"
-    params = [pid]
+        params = [pid]
     if search:
         where += " AND LOWER(h.hostname) LIKE ?"
         params.append(search_like)
@@ -496,6 +509,30 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
     offset = (page - 1) * per_page
     rows = x(
         f"""
+        WITH latest_subfinder_result AS (
+          SELECT
+            rr.project_id,
+            rr.hostname,
+            rr.cn,
+            rr.issuer,
+            rr.expiry,
+            rr.days_left,
+            rr.is_mismatch,
+            rr.same_base,
+            rr.is_expired,
+            rr.is_expiring,
+            rr.is_ok,
+            rr.error,
+            rr.checked_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY rr.project_id, rr.hostname
+              ORDER BY rr.checked_at DESC
+            ) AS rn
+          FROM results rr
+          JOIN scans ss ON ss.id = rr.scan_id
+          WHERE rr.project_id = ?
+            AND ss.triggered_by LIKE 'subfinder:%'
+        )
         SELECT
           h.hostname,
           h.first_seen,
@@ -513,22 +550,15 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
           r.error,
           r.checked_at
         FROM subfinder_hosts h
-        LEFT JOIN results r
-          ON r.id = (
-            SELECT rr.id
-            FROM results rr
-            JOIN scans ss ON ss.id = rr.scan_id
-            WHERE rr.project_id = h.project_id
-              AND rr.hostname = h.hostname
-              AND ss.triggered_by LIKE 'subfinder:%'
-            ORDER BY rr.checked_at DESC
-            LIMIT 1
-          )
+        LEFT JOIN latest_subfinder_result r
+          ON r.project_id = h.project_id
+         AND r.hostname = h.hostname
+         AND r.rn = 1
         {where}
         ORDER BY h.first_seen DESC
         LIMIT ? OFFSET ?
         """,
-        params + [per_page, offset],
+        [pid] + params + [per_page, offset],
     ).fetchall()
     return {
         "rows": [dict(r) for r in rows],

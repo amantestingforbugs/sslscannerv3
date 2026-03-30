@@ -598,6 +598,10 @@ tbody tr:last-child td{border-bottom:none}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/><circle cx="7" cy="7" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="17" cy="17" r="1"/></svg>
       <span>New Discoveries</span>
     </button>
+    <button class="nav-item" data-page="discoveries-latest">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/><path d="M5 5v14"/></svg>
+      <span>Latest Discovery Batch</span>
+    </button>
     <button class="nav-item" data-page="subfinder-raw">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
       <span>Subfinder Raw Results</span>
@@ -912,6 +916,34 @@ tbody tr:last-child td{border-bottom:none}
       </div>
     </div>
 
+    <div class="page" id="page-discoveries-latest">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Latest Discovery Batch</div>
+          <div class="page-sub">Only subdomains discovered in the most recent Subfinder run for each project.</div>
+        </div>
+      </div>
+      <div class="form-group" style="max-width:320px;margin-bottom:14px">
+        <label class="form-label">Project</label>
+        <select class="form-input" id="nd-latest-project-select" onchange="loadLatestDiscoveries()"><option value="">— Choose a project —</option></select>
+      </div>
+      <div class="table-toolbar">
+        <div class="search-input">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="nd-latest-search" placeholder="Search latest discovered hostname...">
+        </div>
+        <span id="nd-latest-count" style="font-size:12px;color:var(--text-muted)">0 rows</span>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Hostname</th><th>First Seen</th><th>SSL Status</th><th>CN</th><th>Expiry</th></tr></thead>
+            <tbody id="nd-latest-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-subfinder-raw">
       <div class="page-header">
         <div>
@@ -1169,7 +1201,7 @@ setInterval(tick,1000); tick();
 // ════════════════════════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
-  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'subfinder-raw':'Subfinder Raw Results', logs:'Logs', settings:'Settings'
+  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subfinder-raw':'Subfinder Raw Results', logs:'Logs', settings:'Settings'
 };
 
 function nav(name) {
@@ -1185,6 +1217,7 @@ function nav(name) {
   if (name==='alerts') loadAlerts();
   if (name==='subfinder') initSfPage();
   if (name==='discoveries') initDiscoveriesPage();
+  if (name==='discoveries-latest') initLatestDiscoveriesPage();
   if (name==='subfinder-raw') initSfRawPage();
   if (name==='logs') loadLogsPage();
 }
@@ -1934,6 +1967,17 @@ async function initDiscoveriesPage() {
   loadDiscoveries();
 }
 
+async function initLatestDiscoveriesPage() {
+  const sel = document.getElementById('nd-latest-project-select');
+  const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Choose a project —</option>' +
+    (projs || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if (prev) sel.value = prev;
+  if (!sel.value && projs?.length) sel.value = projs[0].id;
+  loadLatestDiscoveries();
+}
+
 async function initSfRawPage() {
   const sel = document.getElementById('sf-raw-project-select');
   const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
@@ -1979,20 +2023,47 @@ document.getElementById('topProjectSelect')?.addEventListener('change', (e) => {
 });
 
 async function loadDiscoveries() {
-  const pid = document.getElementById('nd-project-select').value;
-  if (!pid) {
-    document.getElementById('nd-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Select a project to view new discoveries.</td></tr>';
-    return;
+  if (window.ndLoading) return;
+  window.ndLoading = true;
+  try {
+    const pid = document.getElementById('nd-project-select').value;
+    if (!pid) {
+      document.getElementById('nd-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Select a project to view new discoveries.</td></tr>';
+      return;
+    }
+    const q = encodeURIComponent(document.getElementById('nd-search').value || '');
+    const { data } = await fetch(`/api/projects/${pid}/discoveries?search=${q}&page=1&per_page=200&mode=latest`).then(r => r.json());
+    renderDiscoveriesRows(data, 'nd-count', 'nd-body');
+  } finally {
+    window.ndLoading = false;
   }
-  const q = encodeURIComponent(document.getElementById('nd-search').value || '');
-  const { data } = await fetch(`/api/projects/${pid}/discoveries?search=${q}&page=1&per_page=500&mode=latest`).then(r => r.json());
+}
+
+async function loadLatestDiscoveries() {
+  if (window.ndLatestLoading) return;
+  window.ndLatestLoading = true;
+  try {
+    const pid = document.getElementById('nd-latest-project-select').value;
+    if (!pid) {
+      document.getElementById('nd-latest-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Select a project to view latest batch.</td></tr>';
+      return;
+    }
+    const q = encodeURIComponent(document.getElementById('nd-latest-search').value || '');
+    const { data } = await fetch(`/api/projects/${pid}/discoveries?search=${q}&page=1&per_page=200&mode=last_job`).then(r => r.json());
+    renderDiscoveriesRows(data, 'nd-latest-count', 'nd-latest-body');
+  } finally {
+    window.ndLatestLoading = false;
+  }
+}
+
+function renderDiscoveriesRows(data, countId, bodyId) {
   const rows = data?.rows || [];
-  document.getElementById('nd-count').textContent = `${fmt(data?.total || 0)} rows`;
+  document.getElementById(countId).textContent = `${fmt(data?.total || 0)} rows`;
   if (!rows.length) {
-    document.getElementById('nd-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No discoveries found.</td></tr>';
+    document.getElementById(bodyId).innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No discoveries found.</td></tr>';
     return;
   }
-  document.getElementById('nd-body').innerHTML = rows.map(r => `<tr class="${r.is_mismatch ? 'row-mismatch' : ''}">
+  document.getElementById(bodyId).innerHTML = rows.map(r => `<tr class="${r.is_mismatch ? 'row-mismatch' : ''}">
     <td style="font-family:var(--mono);font-size:12px;font-weight:500">${esc(r.hostname)}</td>
     <td style="font-size:12px;color:var(--text-secondary)">${new Date(r.first_seen).toLocaleString()}</td>
     <td>${sbadge(r)}</td>
@@ -2009,6 +2080,9 @@ setInterval(() => {
   if (document.getElementById('page-discoveries').classList.contains('active')) {
     loadDiscoveries();
   }
+  if (document.getElementById('page-discoveries-latest').classList.contains('active')) {
+    loadLatestDiscoveries();
+  }
 }, 8000);
 
 // ════════════════════════════════════════════════════════════
@@ -2018,6 +2092,7 @@ loadDash();
 hydrateTopProjectSelect();
 document.getElementById('alerts-search')?.addEventListener('input', debounce(loadAlerts, 250));
 document.getElementById('nd-search')?.addEventListener('input', debounce(loadDiscoveries, 300));
+document.getElementById('nd-latest-search')?.addEventListener('input', debounce(loadLatestDiscoveries, 300));
 </script>
 </body>
 </html>
