@@ -11,6 +11,7 @@ How it works:
   6. Falls back to simulation mode if subfinder binary not found
 """
 
+import gzip
 import json
 import logging
 import re
@@ -200,7 +201,15 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                 command=f"subfinder -d {root_domain} -silent -all -timeout 30",
             )
             run = _run_subfinder_for_root(root_domain)
-            raw_records.append({k: v for k, v in run.items() if k != "found"})
+            raw_records.append(
+                {
+                    "root_domain": run["root_domain"],
+                    "command": run["command"],
+                    "status": run["status"],
+                    "exit_code": run["exit_code"],
+                    "found_count": len(run["found"]),
+                }
+            )
             discovered_all.extend(run["found"])
             subfinder_raw_result_finish(
                 raw_id,
@@ -226,8 +235,9 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
         raw_dir = Path("data/subfinder_raw")
         raw_dir.mkdir(parents=True, exist_ok=True)
-        raw_output_path = raw_dir / f"{job_id}.json"
-        raw_output_path.write_text(json.dumps(raw_records, indent=2), encoding="utf-8")
+        raw_output_path = raw_dir / f"{job_id}.json.gz"
+        with gzip.open(raw_output_path, "wt", encoding="utf-8") as fp:
+            json.dump(raw_records, fp, separators=(",", ":"))
         subfinder_job_finish(job_id, new_count, len(discovered), str(raw_output_path))
 
         if not discovered:

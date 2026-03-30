@@ -4,7 +4,7 @@ Persistent SQLite layer. Per-thread connection pool, WAL mode, batch writes.
 Extended with subfinder_jobs and subfinder_hosts tables.
 """
 
-import sqlite3, json, uuid, threading, logging
+import sqlite3, json, uuid, threading, logging, zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +33,21 @@ def xm(sql, rows): return _conn().executemany(sql, rows)
 def commit():       _conn().commit()
 def now():          return datetime.now(timezone.utc).isoformat()
 def uid():          return str(uuid.uuid4())
+
+
+def _compress_text(text: str):
+    if not text:
+        return None
+    return sqlite3.Binary(zlib.compress(text.encode("utf-8"), level=6))
+
+
+def _decompress_text(blob):
+    if not blob:
+        return ""
+    try:
+        return zlib.decompress(blob).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def init_db():
@@ -92,6 +107,8 @@ def init_db():
         total_found INTEGER DEFAULT 0,
         stdout_text TEXT DEFAULT '',
         stderr_text TEXT DEFAULT '',
+        stdout_z BLOB,
+        stderr_z BLOB,
         started_at TEXT NOT NULL,
         finished_at TEXT,
         FOREIGN KEY(job_id) REFERENCES subfinder_jobs(id) ON DELETE CASCADE
@@ -136,6 +153,64 @@ def init_db():
         commit()
     except sqlite3.OperationalError:
         pass
+    try:
+        x("ALTER TABLE subfinder_raw_results ADD COLUMN stdout_z BLOB")
+        commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        x("ALTER TABLE subfinder_raw_results ADD COLUMN stderr_z BLOB")
+        commit()
+    except sqlite3.OperationalError:
+        pass
+    # Data cleanup for old DBs: keep only the latest duplicate rows.
+    x(
+        """
+        DELETE FROM alerts
+        WHERE id IN (
+          SELECT a.id
+          FROM alerts a
+          JOIN alerts newer
+            ON newer.dedup_key = a.dedup_key
+           AND (newer.created_at > a.created_at OR (newer.created_at = a.created_at AND newer.id > a.id))
+        )
+        """
+    )
+    x(
+        """
+        DELETE FROM subfinder_raw_results
+        WHERE id IN (
+          SELECT r.id
+          FROM subfinder_raw_results r
+          JOIN subfinder_raw_results newer
+            ON newer.job_id = r.job_id
+           AND newer.root_domain = r.root_domain
+           AND (newer.started_at > r.started_at OR (newer.started_at = r.started_at AND newer.id > r.id))
+        )
+        """
+    )
+    x(
+        """
+        DELETE FROM subfinder_new_discoveries
+        WHERE id IN (
+          SELECT n.id
+          FROM subfinder_new_discoveries n
+          JOIN subfinder_new_discoveries newer
+            ON newer.project_id = n.project_id
+           AND newer.hostname = n.hostname
+           AND (newer.discovered_at > n.discovered_at OR (newer.discovered_at = n.discovered_at AND newer.id > n.id))
+        )
+        """
+    )
+    try:
+        x("CREATE UNIQUE INDEX IF NOT EXISTS idx_sfraw_job_root_unique ON subfinder_raw_results(job_id, root_domain)")
+    except sqlite3.IntegrityError:
+        pass
+    try:
+        x("CREATE UNIQUE INDEX IF NOT EXISTS idx_sfnew_project_host_unique ON subfinder_new_discoveries(project_id, hostname)")
+    except sqlite3.IntegrityError:
+        pass
+    commit()
     log.info("DB ready at %s", DB_PATH)
 
 
@@ -389,7 +464,10 @@ def subfinder_new_discoveries_add_batch(job_id, pid, hostnames):
     xm("INSERT OR IGNORE INTO subfinder_new_discoveries(id,job_id,project_id,hostname,discovered_at)"
        " VALUES(?,?,?,?,?)", rows)
     commit()
-    return len(deduped)
+    return x(
+        "SELECT COUNT(*) FROM subfinder_new_discoveries WHERE job_id=?",
+        (job_id,),
+    ).fetchone()[0]
 
 
 def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
@@ -451,7 +529,7 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
 def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_at=None):
     rid = uid()
     x(
-        "INSERT INTO subfinder_raw_results(id,job_id,project_id,root_domain,command,status,started_at)"
+        "INSERT OR REPLACE INTO subfinder_raw_results(id,job_id,project_id,root_domain,command,status,started_at)"
         " VALUES(?,?,?,?,?,'running',?)",
         (rid, job_id, project_id, root_domain, command, started_at or now()),
     )
@@ -468,8 +546,18 @@ def subfinder_raw_result_finish(
     stderr_text,
 ):
     x(
-        "UPDATE subfinder_raw_results SET status=?,exit_code=?,total_found=?,stdout_text=?,stderr_text=?,finished_at=? WHERE id=?",
-        (status, exit_code, total_found, stdout_text, stderr_text, now(), rid),
+        "UPDATE subfinder_raw_results "
+        "SET status=?,exit_code=?,total_found=?,stdout_text='',stderr_text='',stdout_z=?,stderr_z=?,finished_at=? "
+        "WHERE id=?",
+        (
+            status,
+            exit_code,
+            total_found,
+            _compress_text(stdout_text),
+            _compress_text(stderr_text),
+            now(),
+            rid,
+        ),
     )
     commit()
 
@@ -482,11 +570,15 @@ def subfinder_raw_results_list(pid, limit=20, preview_chars=4000):
     out = []
     for r in rows:
         d = dict(r)
-        out_text = d.get("stdout_text") or ""
+        out_text = d.get("stdout_text") or _decompress_text(d.get("stdout_z"))
+        err_text = d.get("stderr_text") or _decompress_text(d.get("stderr_z"))
         if preview_chars and len(out_text) > preview_chars:
             out_text = out_text[:preview_chars] + "\n…truncated for UI performance…"
         d["raw_preview"] = out_text
         d["raw_lines"] = [ln for ln in out_text.splitlines() if ln.strip()][:250]
+        d["stderr_preview"] = err_text[:preview_chars] if preview_chars else err_text
+        d.pop("stdout_z", None)
+        d.pop("stderr_z", None)
         out.append(d)
     return out
 
