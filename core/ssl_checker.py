@@ -8,10 +8,11 @@ import socket
 import fnmatch
 import ipaddress
 import logging
+import os
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Callable, Optional
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from typing import List, Dict, Callable, Optional, Iterator
 
 try:
     import tldextract
@@ -180,37 +181,69 @@ def get_cert_info(hostname: str) -> Dict:
 
 # ------------------- Batch runner -------------------
 
+def _iter_hostnames(hostnames) -> Iterator[str]:
+    for h in hostnames:
+        if h:
+            yield h
+
+
 def run_checker(
     hostnames: List[str],
     max_workers: int = 50,
     progress_callback: Optional[Callable] = None,
+    collect_results: bool = True,
 ) -> List[Dict]:
     """
     Run SSL checks concurrently against a list of hostnames.
     progress_callback(done, total, result) is called after each completed check.
     """
-    results = []
+    # Keep worker count sane for very large host lists to avoid thread thrash.
+    env_workers = int(os.getenv("SSL_MAX_WORKERS", str(max_workers or 50)))
+    workers = max(1, min(env_workers, 256))
     total = len(hostnames)
+    results = [] if collect_results else None
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(get_cert_info, h): h for h in hostnames}
-        for i, future in enumerate(as_completed(futures), 1):
-            result = future.result()
-            results.append(result)
-            if progress_callback:
+    host_iter = iter(_iter_hostnames(hostnames))
+    done = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        inflight = set()
+
+        # Prime in-flight queue once; do NOT submit millions of futures at once.
+        for _ in range(workers):
+            try:
+                inflight.add(executor.submit(get_cert_info, next(host_iter)))
+            except StopIteration:
+                break
+
+        while inflight:
+            finished, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+            for future in finished:
+                done += 1
+                result = future.result()
+                if collect_results:
+                    results.append(result)
+                if progress_callback:
+                    try:
+                        progress_callback(done, total, result)
+                    except Exception:
+                        pass
                 try:
-                    progress_callback(i, total, result)
-                except Exception:
+                    inflight.add(executor.submit(get_cert_info, next(host_iter)))
+                except StopIteration:
                     pass
 
-    return results
+    return results or []
 
 
 def parse_hosts_file(content: str) -> List[str]:
     """Parse a hosts file (text content) into a clean list of hostnames."""
-    lines = content.strip().splitlines()
-    return [
-        extract_hostname(line)
-        for line in lines
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    hosts: List[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        host = extract_hostname(line)
+        if host:
+            hosts.append(host)
+    return hosts

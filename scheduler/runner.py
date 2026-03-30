@@ -3,6 +3,7 @@ scheduler/runner.py — Background SSL scan scheduler.
 Exports BATCH_SIZE and PROGRESS_UPDATE_EVERY for use by subfinder module.
 """
 
+import os
 import threading, time, logging
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -13,7 +14,7 @@ log = logging.getLogger(__name__)
 # ── Shared constants (used by subfinder module too) ───────────────────────────
 BATCH_SIZE = 500
 PROGRESS_UPDATE_EVERY = 500
-MAX_WORKERS = 500
+MAX_WORKERS = int(os.getenv("SSL_MAX_WORKERS", "200"))
 
 # ── In-memory scan state (shared with subfinder via import) ───────────────────
 _scan_state: Dict[str, Dict] = {}
@@ -97,7 +98,12 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
                         _scan_state[sid]["progress"] = cur
 
     try:
-        run_checker(hosts, max_workers=MAX_WORKERS, progress_callback=on_result)
+        run_checker(
+            hosts,
+            max_workers=MAX_WORKERS,
+            progress_callback=on_result,
+            collect_results=False,  # avoid storing millions of in-memory results
+        )
 
         with lock:
             if result_batch:
