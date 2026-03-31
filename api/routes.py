@@ -12,6 +12,8 @@ import queue
 import threading
 import time
 import logging
+import subprocess
+from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 
 import db.database as db
@@ -63,6 +65,46 @@ def ok(data=None, **kw):
 
 def err(msg, code=400):
     return jsonify({"ok": False, "error": msg}), code
+
+
+def _normalize_hostname(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    if not v:
+        return ""
+    if "://" in v:
+        try:
+            v = (urlparse(v).hostname or "").strip().lower()
+        except Exception:
+            v = ""
+    if ":" in v:
+        v = v.split(":", 1)[0]
+    return v.strip(".")
+
+
+def _run_openssl_subject(hostname: str, timeout: int = 20) -> dict:
+    cmd = ["openssl", "s_client", "-connect", f"{hostname}:443"]
+    try:
+        run = subprocess.run(
+            cmd,
+            input="",
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        lines = [ln.strip() for ln in (run.stdout or "").splitlines() if "subject" in ln.lower()]
+        subject = lines[0] if lines else ""
+        return {
+            "hostname": hostname,
+            "subject": subject or "subject not found",
+            "status": "ok" if subject else "no_subject",
+            "exit_code": run.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"hostname": hostname, "subject": "", "status": "timeout", "error": f"timeout after {timeout}s"}
+    except FileNotFoundError:
+        return {"hostname": hostname, "subject": "", "status": "error", "error": "openssl binary not found"}
+    except Exception as e:
+        return {"hostname": hostname, "subject": "", "status": "error", "error": str(e)}
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────
@@ -325,6 +367,42 @@ def toggle_subfinder(pid):
     new_val = 0 if p.get("subfinder_enabled") else 1
     db.project_update(pid, subfinder_enabled=new_val)
     return ok({"subfinder_enabled": new_val})
+
+
+@api.post("/projects/<pid>/openssl")
+def openssl_subjects(pid):
+    p = db.project_get(pid)
+    if not p:
+        return err("Project not found", 404)
+
+    # Run a fresh subfinder pass first so newly discovered subdomains are included.
+    subfinder_job_id = None
+    subfinder_error = ""
+    try:
+        from subfinder.runner import run_subfinder_for_project
+        subfinder_job_id = run_subfinder_for_project(pid, triggered_by="manual:openssl")
+    except Exception as e:
+        subfinder_error = str(e)
+
+    base_hosts = {_normalize_hostname(h) for h in db.project_hosts(pid)}
+    sf_hosts = {
+        _normalize_hostname(r["hostname"])
+        for r in db.x("SELECT hostname FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchall()
+    }
+    hosts = sorted({h for h in (base_hosts | sf_hosts) if h})
+    if not hosts:
+        return err("No hosts found. Upload project hosts first.", 400)
+
+    rows = [_run_openssl_subject(h) for h in hosts]
+    return ok({
+        "project_id": pid,
+        "project_name": p["name"],
+        "hosts_total": len(hosts),
+        "subfinder_job_id": subfinder_job_id,
+        "subfinder_error": subfinder_error,
+        "command_template": "openssl s_client -connect HOSTNAME:443 </dev/null 2>/dev/null | grep subject",
+        "rows": rows,
+    })
 
 
 # ── Background SSE broadcaster for scan progress ───────────────────────────────
