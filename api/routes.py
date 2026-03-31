@@ -343,7 +343,9 @@ def active_scans():
 def get_alerts():
     search = (request.args.get("search", "") or "").strip()
     mismatch = (request.args.get("mismatch_scope", "all") or "all").strip()
-    return ok(db.alerts_get(search=search, mismatch_scope=mismatch))
+    page = max(1, int(request.args.get("page", 1)))
+    per_page = min(1000, max(50, int(request.args.get("per_page", 200))))
+    return ok(db.alerts_get(search=search, mismatch_scope=mismatch, page=page, per_page=per_page))
 
 
 @api.post("/alerts/<aid>/read")

@@ -392,7 +392,7 @@ def alert_add(pid, hostname, issue, detail, scan_id="", mismatch_scope=""):
     commit()
     return True
 
-def alerts_get(limit=200, search="", mismatch_scope="all"):
+def alerts_get(search="", mismatch_scope="all", page=1, per_page=200):
     clauses = ["1=1"]
     params = []
     if search:
@@ -402,11 +402,25 @@ def alerts_get(limit=200, search="", mismatch_scope="all"):
         clauses.append("a.mismatch_scope=?")
         params.append(mismatch_scope)
     where = " AND ".join(clauses)
-    params.append(limit)
-    return [dict(r) for r in x(
+    total = x(
+        "SELECT COUNT(*) FROM alerts a"
+        f" JOIN projects p ON p.id=a.project_id WHERE {where}",
+        params,
+    ).fetchone()[0]
+    offset = (page - 1) * per_page
+    rows = [dict(r) for r in x(
         "SELECT a.*,p.name project_name FROM alerts a"
         f" JOIN projects p ON p.id=a.project_id WHERE {where}"
-        " ORDER BY a.created_at DESC LIMIT ?", params)]
+        " ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
+        params + [per_page, offset],
+    )]
+    return {
+        "alerts": rows,
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "per_page": per_page,
+    }
 
 def alerts_unseen_count():
     return x("SELECT COUNT(*) FROM alerts WHERE seen=0").fetchone()[0]

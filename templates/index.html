@@ -881,7 +881,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <input class="form-input" id="alerts-search" placeholder="Search hostname..." style="max-width:260px">
-          <select class="form-input" id="alerts-filter" style="max-width:260px" onchange="loadAlerts()">
+          <select class="form-input" id="alerts-filter" style="max-width:260px" onchange="loadAlerts(1)">
             <option value="all">All mismatches</option>
             <option value="same_domain">Same domain mismatch</option>
             <option value="different_domain">Different domain mismatch</option>
@@ -890,6 +890,13 @@ tbody tr:last-child td{border-bottom:none}
       </div>
       <div class="card">
         <div id="alerts-body"><div class="empty"><div class="empty-icon">🔔</div><div class="empty-title">No alerts</div><p class="empty-desc">Alerts appear automatically when issues are detected.</p></div></div>
+        <div class="pagination" id="alerts-pagination" style="display:none;padding:10px 14px 14px">
+          <div id="alerts-pag-info" style="font-size:12px;color:var(--text-muted)">Page 1 of 1</div>
+          <div class="pagination-controls">
+            <button class="btn btn-sm" id="alerts-pag-prev" onclick="changeAlertsPage(-1)">← Prev</button>
+            <button class="btn btn-sm" id="alerts-pag-next" onclick="changeAlertsPage(1)">Next →</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1187,7 +1194,7 @@ let curPid = null, curSid = null, curFilter = 'all', curPage = 1, totalPages = 1
 let allResRows = [], sortCol = null, sortDir = 1;
 let scanPollTimer = null;
 let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
-let allAlerts = [];
+let allAlerts = [], alertsCurPage = 1, alertsTotalPages = 1;
 let projectsCache = [];
 let opensslRows = [];
 let opensslPid = null;
@@ -1915,34 +1922,52 @@ function viewScan(sid, scan) {
 // ════════════════════════════════════════════════════════════
 // ALERTS
 // ════════════════════════════════════════════════════════════
-async function loadAlerts() {
+async function loadAlerts(page) {
   try {
+    alertsCurPage = page || alertsCurPage || 1;
     const q = encodeURIComponent((document.getElementById('alerts-search').value || '').trim());
     const mismatch = encodeURIComponent(document.getElementById('alerts-filter').value || 'all');
-    const { data: alerts } = await fetch(`/api/alerts?search=${q}&mismatch_scope=${mismatch}`).then(r=>r.json());
-    allAlerts = alerts || [];
-    renderAlerts();
+    const perPage = 200;
+    const { data } = await fetch(`/api/alerts?search=${q}&mismatch_scope=${mismatch}&page=${alertsCurPage}&per_page=${perPage}`).then(r=>r.json());
+    allAlerts = data?.alerts || [];
+    alertsTotalPages = data?.pages || 1;
+    renderAlerts(data || {});
   } catch {}
 }
 
-function renderAlerts() {
+function renderAlerts(d) {
   const el = document.getElementById('alerts-body');
-  let filtered = allAlerts;
-  if (!filtered.length) {
+  if (!allAlerts.length) {
     el.innerHTML='<div class="empty"><div class="empty-icon">🔔</div><div class="empty-title">No alerts for current filters</div></div>';
-    return;
+  } else {
+    const cls=t=>t.includes('Mismatch')?'mismatch':t.includes('Expir')?'expiring':'expired';
+    el.innerHTML=allAlerts.map(a=>`
+      <div class="alert-item ${a.seen?'':'unread'}" onclick="markOneSeen('${a.id}',this)">
+        <div class="alert-dot" style="color:${a.seen?'var(--text-muted)':'var(--red)'}">●</div>
+        <div style="flex:1;min-width:0">
+          <div class="alert-host">${esc(a.hostname)}</div>
+          <div class="alert-desc ${cls(a.issue_type)}">${esc(a.issue_type)} — ${esc(a.details)}</div>
+          <div class="alert-meta">Project: ${esc(a.project_name)}</div>
+        </div>
+        <div class="alert-time">${new Date(a.created_at).toLocaleString()}</div>
+      </div>`).join('');
   }
-  const cls=t=>t.includes('Mismatch')?'mismatch':t.includes('Expir')?'expiring':'expired';
-  el.innerHTML=filtered.map(a=>`
-    <div class="alert-item ${a.seen?'':'unread'}" onclick="markOneSeen('${a.id}',this)">
-      <div class="alert-dot" style="color:${a.seen?'var(--text-muted)':'var(--red)'}">●</div>
-      <div style="flex:1;min-width:0">
-        <div class="alert-host">${esc(a.hostname)}</div>
-        <div class="alert-desc ${cls(a.issue_type)}">${esc(a.issue_type)} — ${esc(a.details)}</div>
-        <div class="alert-meta">Project: ${esc(a.project_name)}</div>
-      </div>
-      <div class="alert-time">${new Date(a.created_at).toLocaleString()}</div>
-    </div>`).join('');
+  renderAlertsPagination(d);
+}
+
+function renderAlertsPagination(d) {
+  const el = document.getElementById('alerts-pagination');
+  if ((d.pages || 1) <= 1) { el.style.display='none'; return; }
+  el.style.display='flex';
+  document.getElementById('alerts-pag-info').textContent = `Page ${d.page || 1} of ${d.pages || 1} (${fmt(d.total || 0)} total)`;
+  document.getElementById('alerts-pag-prev').disabled = (d.page || 1) <= 1;
+  document.getElementById('alerts-pag-next').disabled = (d.page || 1) >= (d.pages || 1);
+}
+
+function changeAlertsPage(dir) {
+  const np = alertsCurPage + dir;
+  if (np < 1 || np > alertsTotalPages) return;
+  loadAlerts(np);
 }
 
 async function markOneSeen(id, row) {
@@ -2224,7 +2249,10 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════
 loadDash();
 hydrateTopProjectSelect();
-document.getElementById('alerts-search')?.addEventListener('input', debounce(loadAlerts, 250));
+document.getElementById('alerts-search')?.addEventListener('input', debounce(() => {
+  alertsCurPage = 1;
+  loadAlerts(1);
+}, 250));
 document.getElementById('nd-search')?.addEventListener('input', debounce(loadDiscoveries, 300));
 document.getElementById('nd-latest-search')?.addEventListener('input', debounce(loadLatestDiscoveries, 300));
 </script>
