@@ -859,6 +859,27 @@ tbody tr:last-child td{border-bottom:none}
           </div>
         </div>
       </div>
+
+      <!-- OpenSSL -->
+      <div class="card" id="openssl-card">
+        <div class="card-header">
+          <span class="card-title">OpenSSL</span>
+          <div class="card-actions">
+            <button class="btn btn-sm btn-primary" id="openssl-run-btn" onclick="runOpenSSLSection()">Run OpenSSL on all hosts</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding-bottom:8px">
+          <div id="openssl-meta" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
+            Runs on project hosts + Subfinder hosts from a fresh Subfinder run.
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hostname</th><th>Status</th><th>Subject</th></tr></thead>
+              <tbody id="openssl-body"><tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Run OpenSSL to view subjects.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ══════ ALERTS ══════ -->
@@ -1157,6 +1178,7 @@ let scanPollTimer = null;
 let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [];
 let projectsCache = [];
+let opensslRows = [];
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1526,6 +1548,8 @@ async function createProject() {
 // ════════════════════════════════════════════════════════════
 async function openProject(pid) {
   curPid = pid; nav('detail');
+  document.getElementById('openssl-body').innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Run OpenSSL to view subjects.</td></tr>';
+  document.getElementById('openssl-meta').textContent = 'Runs on project hosts + Subfinder hosts from a fresh Subfinder run.';
   try {
     const { data: p } = await fetch(`/api/projects/${pid}`).then(r=>r.json());
     document.getElementById('det-name').textContent = p.name;
@@ -1542,6 +1566,46 @@ async function openProject(pid) {
       startPoll();
     }
   } catch {}
+}
+
+async function runOpenSSLSection() {
+  if (!curPid) return;
+  const btn = document.getElementById('openssl-run-btn');
+  const meta = document.getElementById('openssl-meta');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  meta.textContent = 'Running OpenSSL and Subfinder...';
+  try {
+    const { ok, data, error } = await fetch(`/api/projects/${curPid}/openssl`, { method: 'POST' }).then(r => r.json());
+    if (!ok) {
+      toast(error || 'Failed to run OpenSSL', 'err');
+      meta.textContent = error || 'Failed to run OpenSSL';
+      return;
+    }
+    opensslRows = data?.rows || [];
+    meta.textContent = `Checked ${fmt(data?.hosts_total || 0)} hosts · Command: ${data?.command_template || ''}`;
+    renderOpenSSLRows(opensslRows);
+    toast('OpenSSL results updated', 'ok');
+  } catch {
+    toast('Failed to run OpenSSL', 'err');
+    meta.textContent = 'Failed to run OpenSSL.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run OpenSSL on all hosts';
+  }
+}
+
+function renderOpenSSLRows(rows) {
+  const body = document.getElementById('openssl-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">No OpenSSL results found.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => `<tr>
+    <td style="font-family:var(--mono);font-size:12px">${esc(r.hostname)}</td>
+    <td><span class="badge ${r.status==='ok'?'badge-ok':r.status==='no_subject'?'badge-expiring':'badge-error'}">${esc(r.status || 'unknown')}</span></td>
+    <td style="font-family:var(--mono);font-size:11px;max-width:700px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.subject || r.error || '—')}">${esc(r.subject || r.error || '—')}</td>
+  </tr>`).join('');
 }
 
 async function delProject() {
