@@ -139,6 +139,18 @@ def init_db():
         UNIQUE(job_id, hostname),
         FOREIGN KEY(job_id) REFERENCES subfinder_jobs(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS openssl_results (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        hostname TEXT NOT NULL,
+        status TEXT DEFAULT '',
+        subject TEXT DEFAULT '',
+        error TEXT DEFAULT '',
+        exit_code INTEGER,
+        source TEXT DEFAULT 'manual',
+        last_checked TEXT NOT NULL,
+        UNIQUE(project_id, hostname)
+    );
     CREATE INDEX IF NOT EXISTS idx_res_scan  ON results(scan_id);
     CREATE INDEX IF NOT EXISTS idx_res_proj  ON results(project_id);
     CREATE INDEX IF NOT EXISTS idx_res_mis   ON results(scan_id, is_mismatch);
@@ -154,6 +166,7 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_scans_triggered_by ON scans(triggered_by);
     CREATE INDEX IF NOT EXISTS idx_sfjobs_proj_started ON subfinder_jobs(project_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sfnew_proj_job_host ON subfinder_new_discoveries(project_id, job_id, hostname);
+    CREATE INDEX IF NOT EXISTS idx_openssl_proj_checked ON openssl_results(project_id, last_checked DESC);
     """)
     # Lightweight migrations for existing DBs
     try:
@@ -269,7 +282,7 @@ def project_update(pid, **kw):
     commit()
 
 def project_delete(pid):
-    for t in ("results","alerts","scans","subfinder_jobs","subfinder_hosts","subfinder_new_discoveries"):
+    for t in ("results","alerts","scans","subfinder_jobs","subfinder_hosts","subfinder_new_discoveries","openssl_results"):
         x(f"DELETE FROM {t} WHERE project_id=?", (pid,))
     x("DELETE FROM projects WHERE id=?", (pid,))
     commit()
@@ -638,6 +651,60 @@ def subfinder_raw_results_list(pid, limit=20, preview_chars=4000):
         d.pop("stderr_z", None)
         out.append(d)
     return out
+
+
+# ── OpenSSL live results ─────────────────────────────────────────────────────
+
+def openssl_results_upsert_batch(pid, rows, source="manual"):
+    ts = now()
+    payload = [
+        (
+            uid(),
+            pid,
+            (r.get("hostname") or "").strip().lower(),
+            r.get("status", "") or "",
+            r.get("subject", "") or "",
+            r.get("error", "") or "",
+            r.get("exit_code"),
+            source,
+            ts,
+        )
+        for r in rows
+        if (r.get("hostname") or "").strip()
+    ]
+    if not payload:
+        return 0
+    xm(
+        """
+        INSERT INTO openssl_results(id, project_id, hostname, status, subject, error, exit_code, source, last_checked)
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(project_id, hostname) DO UPDATE SET
+          status=excluded.status,
+          subject=excluded.subject,
+          error=excluded.error,
+          exit_code=excluded.exit_code,
+          source=excluded.source,
+          last_checked=excluded.last_checked
+        """,
+        payload,
+    )
+    commit()
+    return len(payload)
+
+
+def openssl_results_list(pid, search="", limit=2000):
+    params = [pid]
+    where = "WHERE project_id=?"
+    if search:
+        where += " AND hostname LIKE ?"
+        params.append(f"%{search.strip().lower()}%")
+    params.append(max(1, min(5000, int(limit or 2000))))
+    rows = x(
+        f"SELECT hostname,status,subject,error,exit_code,source,last_checked "
+        f"FROM openssl_results {where} ORDER BY hostname ASC LIMIT ?",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Global stats ──────────────────────────────────────────────────────────────

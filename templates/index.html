@@ -606,6 +606,10 @@ tbody tr:last-child td{border-bottom:none}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
       <span>Subfinder Raw Results</span>
     </button>
+    <button class="nav-item" data-page="openssl">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M5 7h14"/><path d="M5 17h14"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>OpenSSL</span>
+    </button>
     <button class="nav-item" data-page="logs">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
       <span>Logs</span>
@@ -860,26 +864,6 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
-      <!-- OpenSSL -->
-      <div class="card" id="openssl-card">
-        <div class="card-header">
-          <span class="card-title">OpenSSL</span>
-          <div class="card-actions">
-            <button class="btn btn-sm btn-primary" id="openssl-run-btn" onclick="runOpenSSLSection()">Run OpenSSL on all hosts</button>
-          </div>
-        </div>
-        <div class="card-body" style="padding-bottom:8px">
-          <div id="openssl-meta" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
-            Runs on project hosts + Subfinder hosts from a fresh Subfinder run.
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Hostname</th><th>Status</th><th>Subject</th></tr></thead>
-              <tbody id="openssl-body"><tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Run OpenSSL to view subjects.</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- ══════ ALERTS ══════ -->
@@ -982,6 +966,33 @@ tbody tr:last-child td{border-bottom:none}
             <thead><tr><th>Domain Scanned</th><th>Timestamp</th><th>Total Found</th><th>Status</th><th>Raw Output</th></tr></thead>
             <tbody id="sf-raw-page-body"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-openssl">
+      <div class="page-header">
+        <div>
+          <div class="page-title">OpenSSL Live Results</div>
+          <div class="page-sub">Continuous OpenSSL scans for project hosts and newly discovered Subfinder hosts.</div>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:14px;max-width:760px">
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-input" id="openssl-project-select" onchange="onOpenSSLProjectChange()"><option value="">— Choose a project —</option></select>
+        </div>
+        <button class="btn btn-primary" style="height:36px" id="openssl-start-btn" onclick="startOpenSSLContinuous()">▶ Start Continuous OpenSSL</button>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding-bottom:8px">
+          <div id="openssl-meta" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">Choose a project to view OpenSSL results.</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hostname</th><th>Status</th><th>Subject</th><th>Last Checked</th></tr></thead>
+              <tbody id="openssl-body"><tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No OpenSSL results yet.</td></tr></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -1179,6 +1190,7 @@ let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [];
 let projectsCache = [];
 let opensslRows = [];
+let opensslPid = null;
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1223,7 +1235,7 @@ setInterval(tick,1000); tick();
 // ════════════════════════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
-  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subfinder-raw':'Subfinder Raw Results', logs:'Logs', settings:'Settings'
+  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subfinder-raw':'Subfinder Raw Results', openssl:'OpenSSL', logs:'Logs', settings:'Settings'
 };
 
 function nav(name) {
@@ -1241,6 +1253,7 @@ function nav(name) {
   if (name==='discoveries') initDiscoveriesPage();
   if (name==='discoveries-latest') initLatestDiscoveriesPage();
   if (name==='subfinder-raw') initSfRawPage();
+  if (name==='openssl') initOpenSSLPage();
   if (name==='logs') loadLogsPage();
 }
 
@@ -1331,6 +1344,20 @@ function connectSSE() {
   es.addEventListener('log_update', e => {
     const d = JSON.parse(e.data);
     appendLogRow(d.entry);
+  });
+  es.addEventListener('openssl_row', e => {
+    const d = JSON.parse(e.data || '{}');
+    if (!d?.row || d.project_id !== opensslPid) return;
+    const idx = opensslRows.findIndex(r => r.hostname === d.row.hostname);
+    if (idx >= 0) opensslRows[idx] = d.row; else opensslRows.push(d.row);
+    opensslRows.sort((a, b) => (a.hostname || '').localeCompare(b.hostname || ''));
+    renderOpenSSLRows(opensslRows);
+  });
+  es.addEventListener('openssl_status', e => {
+    const d = JSON.parse(e.data || '{}');
+    if (d.project_id !== opensslPid) return;
+    const meta = document.getElementById('openssl-meta');
+    meta.textContent = `Worker status: ${d.status || 'idle'} · tracked hosts: ${fmt(d.tracked_hosts || 0)}`;
   });
 
   es.addEventListener('project_created', () => {
@@ -1482,6 +1509,9 @@ async function loadDashMismatches() {
 setInterval(() => {
   if (document.getElementById('page-dashboard').classList.contains('active')) loadDash();
 }, 60000);
+setInterval(() => {
+  if (document.getElementById('page-openssl').classList.contains('active') && opensslPid) loadOpenSSLRows();
+}, 12000);
 
 // ════════════════════════════════════════════════════════════
 // PROJECTS
@@ -1548,8 +1578,6 @@ async function createProject() {
 // ════════════════════════════════════════════════════════════
 async function openProject(pid) {
   curPid = pid; nav('detail');
-  document.getElementById('openssl-body').innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Run OpenSSL to view subjects.</td></tr>';
-  document.getElementById('openssl-meta').textContent = 'Runs on project hosts + Subfinder hosts from a fresh Subfinder run.';
   try {
     const { data: p } = await fetch(`/api/projects/${pid}`).then(r=>r.json());
     document.getElementById('det-name').textContent = p.name;
@@ -1568,44 +1596,86 @@ async function openProject(pid) {
   } catch {}
 }
 
-async function runOpenSSLSection() {
-  if (!curPid) return;
-  const btn = document.getElementById('openssl-run-btn');
-  const meta = document.getElementById('openssl-meta');
-  btn.disabled = true;
-  btn.textContent = 'Running…';
-  meta.textContent = 'Running OpenSSL and Subfinder...';
-  try {
-    const { ok, data, error } = await fetch(`/api/projects/${curPid}/openssl`, { method: 'POST' }).then(r => r.json());
-    if (!ok) {
-      toast(error || 'Failed to run OpenSSL', 'err');
-      meta.textContent = error || 'Failed to run OpenSSL';
-      return;
-    }
-    opensslRows = data?.rows || [];
-    meta.textContent = `Checked ${fmt(data?.hosts_total || 0)} hosts · Command: ${data?.command_template || ''}`;
-    renderOpenSSLRows(opensslRows);
-    toast('OpenSSL results updated', 'ok');
-  } catch {
-    toast('Failed to run OpenSSL', 'err');
-    meta.textContent = 'Failed to run OpenSSL.';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run OpenSSL on all hosts';
-  }
-}
-
 function renderOpenSSLRows(rows) {
   const body = document.getElementById('openssl-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">No OpenSSL results found.</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No OpenSSL results found.</td></tr>';
     return;
   }
   body.innerHTML = rows.map(r => `<tr>
     <td style="font-family:var(--mono);font-size:12px">${esc(r.hostname)}</td>
     <td><span class="badge ${r.status==='ok'?'badge-ok':r.status==='no_subject'?'badge-expiring':'badge-error'}">${esc(r.status || 'unknown')}</span></td>
     <td style="font-family:var(--mono);font-size:11px;max-width:700px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.subject || r.error || '—')}">${esc(r.subject || r.error || '—')}</td>
+    <td style="font-size:11px;color:var(--text-muted)">${r.last_checked ? new Date(r.last_checked).toLocaleString() : '—'}</td>
   </tr>`).join('');
+}
+
+async function initOpenSSLPage() {
+  try {
+    const projs = projectsCache.length ? projectsCache : ((await apiJSON('/api/projects')).data || []);
+    const sel = document.getElementById('openssl-project-select');
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="">— Choose a project —</option>' + projs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (curVal) sel.value = curVal;
+    if (!sel.value && projs.length) {
+      sel.value = projs[0].id;
+    }
+    await onOpenSSLProjectChange();
+  } catch {
+    toast('Failed to load OpenSSL projects', 'err');
+  }
+}
+
+async function onOpenSSLProjectChange() {
+  opensslPid = document.getElementById('openssl-project-select').value || null;
+  await loadOpenSSLRows();
+}
+
+async function startOpenSSLContinuous() {
+  if (!opensslPid) {
+    toast('Please choose a project', 'err');
+    return;
+  }
+  const btn = document.getElementById('openssl-start-btn');
+  btn.disabled = true;
+  try {
+    const { ok, data, error } = await fetch(`/api/projects/${opensslPid}/openssl/start`, { method: 'POST' }).then(r => r.json());
+    if (!ok) {
+      toast(error || 'Failed to start OpenSSL continuous scan', 'err');
+      return;
+    }
+    toast(data?.message || 'OpenSSL continuous scan started', 'ok');
+    await loadOpenSSLRows();
+  } catch {
+    toast('Failed to start OpenSSL continuous scan', 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadOpenSSLRows() {
+  const meta = document.getElementById('openssl-meta');
+  if (!opensslPid) {
+    opensslRows = [];
+    meta.textContent = 'Choose a project to view OpenSSL results.';
+    renderOpenSSLRows(opensslRows);
+    return;
+  }
+  meta.textContent = 'Loading OpenSSL results...';
+  try {
+    const { ok, data, error } = await fetch(`/api/projects/${opensslPid}/openssl?limit=5000`).then(r => r.json());
+    if (!ok) {
+      meta.textContent = error || 'Failed to load OpenSSL results.';
+      renderOpenSSLRows([]);
+      return;
+    }
+    opensslRows = data?.rows || [];
+    const worker = data?.worker || {};
+    meta.textContent = `Rows: ${fmt(data?.rows_total || 0)} · Tracked hosts: ${fmt(data?.tracked_hosts || 0)} · Worker: ${worker.status || 'idle'}`;
+    renderOpenSSLRows(opensslRows);
+  } catch {
+    meta.textContent = 'Failed to load OpenSSL results.';
+  }
 }
 
 async function delProject() {

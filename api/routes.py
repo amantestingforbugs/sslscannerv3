@@ -28,6 +28,9 @@ api = Blueprint("api", __name__, url_prefix="/api")
 # Each connected browser gets its own queue. Events pushed here reach all clients.
 _sse_clients: list[queue.Queue] = []
 _sse_lock = threading.Lock()
+_openssl_threads: dict[str, threading.Thread] = {}
+_openssl_status: dict[str, dict] = {}
+_openssl_lock = threading.Lock()
 
 
 def broadcast(event: str, data: dict):
@@ -105,6 +108,78 @@ def _run_openssl_subject(hostname: str, timeout: int = 20) -> dict:
         return {"hostname": hostname, "subject": "", "status": "error", "error": "openssl binary not found"}
     except Exception as e:
         return {"hostname": hostname, "subject": "", "status": "error", "error": str(e)}
+
+
+def _collect_openssl_hosts(pid: str) -> list[str]:
+    base_hosts = {_normalize_hostname(h) for h in db.project_hosts(pid)}
+    sf_hosts = {
+        _normalize_hostname(r["hostname"])
+        for r in db.x("SELECT hostname FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchall()
+    }
+    return sorted({h for h in (base_hosts | sf_hosts) if h})
+
+
+def _start_openssl_worker(pid: str, source: str = "manual") -> bool:
+    with _openssl_lock:
+        existing = _openssl_threads.get(pid)
+        if existing and existing.is_alive():
+            return False
+        _openssl_status[pid] = {
+            "status": "running",
+            "source": source,
+            "started_at": time.time(),
+            "last_tick": time.time(),
+            "processed_total": 0,
+            "new_hosts_scanned": 0,
+        }
+        th = threading.Thread(target=_openssl_worker_loop, args=(pid, source), daemon=True, name=f"openssl-{pid[:8]}")
+        _openssl_threads[pid] = th
+        th.start()
+        return True
+
+
+def _openssl_worker_loop(pid: str, source: str):
+    try:
+        while True:
+            if not db.project_get(pid):
+                break
+            known = {r["hostname"] for r in db.openssl_results_list(pid, limit=5000)}
+            hosts = _collect_openssl_hosts(pid)
+            pending = [h for h in hosts if h not in known]
+
+            with _openssl_lock:
+                if pid in _openssl_status:
+                    _openssl_status[pid]["last_tick"] = time.time()
+
+            if not pending:
+                broadcast("openssl_status", {"project_id": pid, "status": "idle_waiting", "tracked_hosts": len(hosts)})
+                time.sleep(10)
+                continue
+
+            rows = []
+            for hostname in pending:
+                row = _run_openssl_subject(hostname)
+                rows.append(row)
+                db.openssl_results_upsert_batch(pid, [row], source=source)
+                with _openssl_lock:
+                    if pid in _openssl_status:
+                        _openssl_status[pid]["processed_total"] += 1
+                        _openssl_status[pid]["new_hosts_scanned"] += 1
+                broadcast("openssl_row", {"project_id": pid, "row": row})
+
+            broadcast("openssl_status", {
+                "project_id": pid,
+                "status": "running",
+                "processed": len(rows),
+                "pending_after": 0,
+                "tracked_hosts": len(hosts),
+            })
+            time.sleep(2)
+    finally:
+        with _openssl_lock:
+            if pid in _openssl_status:
+                _openssl_status[pid]["status"] = "stopped"
+        broadcast("openssl_status", {"project_id": pid, "status": "stopped"})
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────
@@ -384,16 +459,12 @@ def openssl_subjects(pid):
     except Exception as e:
         subfinder_error = str(e)
 
-    base_hosts = {_normalize_hostname(h) for h in db.project_hosts(pid)}
-    sf_hosts = {
-        _normalize_hostname(r["hostname"])
-        for r in db.x("SELECT hostname FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchall()
-    }
-    hosts = sorted({h for h in (base_hosts | sf_hosts) if h})
+    hosts = _collect_openssl_hosts(pid)
     if not hosts:
         return err("No hosts found. Upload project hosts first.", 400)
 
     rows = [_run_openssl_subject(h) for h in hosts]
+    db.openssl_results_upsert_batch(pid, rows, source="manual")
     return ok({
         "project_id": pid,
         "project_name": p["name"],
@@ -402,6 +473,40 @@ def openssl_subjects(pid):
         "subfinder_error": subfinder_error,
         "command_template": "openssl s_client -connect HOSTNAME:443 </dev/null 2>/dev/null | grep subject",
         "rows": rows,
+    })
+
+
+@api.get("/projects/<pid>/openssl")
+def openssl_subjects_list(pid):
+    p = db.project_get(pid)
+    if not p:
+        return err("Project not found", 404)
+    limit = min(5000, max(50, int(request.args.get("limit", 2000))))
+    search = (request.args.get("search", "") or "").strip()
+    rows = db.openssl_results_list(pid, search=search, limit=limit)
+    with _openssl_lock:
+        status = dict(_openssl_status.get(pid) or {"status": "idle"})
+    return ok({
+        "project_id": pid,
+        "project_name": p["name"],
+        "rows": rows,
+        "rows_total": len(rows),
+        "tracked_hosts": len(_collect_openssl_hosts(pid)),
+        "worker": status,
+    })
+
+
+@api.post("/projects/<pid>/openssl/start")
+def openssl_subjects_start(pid):
+    p = db.project_get(pid)
+    if not p:
+        return err("Project not found", 404)
+    started = _start_openssl_worker(pid, source="continuous")
+    return ok({
+        "project_id": pid,
+        "project_name": p["name"],
+        "started": started,
+        "message": "OpenSSL continuous scan started" if started else "OpenSSL continuous scan already running",
     })
 
 
