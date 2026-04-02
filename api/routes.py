@@ -533,6 +533,7 @@ def get_alert_settings():
 @api.put("/alert-settings")
 def update_alert_settings():
     d = request.json or {}
+    previous = db.alert_settings_get()
     cleaned = {
         "telegram_enabled": d.get("telegram_enabled"),
         "telegram_bot_token": (d.get("telegram_bot_token") or "").strip(),
@@ -549,6 +550,12 @@ def update_alert_settings():
         "minimum_days_left": d.get("minimum_days_left", 30),
     }
     out = db.alert_settings_update(**cleaned)
+    discord_turned_on = bool(out.get("discord_enabled")) and not bool(previous.get("discord_enabled"))
+    discord_webhook_changed = (out.get("discord_webhook_url") or "") != (previous.get("discord_webhook_url") or "")
+    if bool(out.get("discord_enabled")) and (discord_turned_on or discord_webhook_changed):
+        # Re-queue existing unresolved alerts so a newly enabled/updated Discord webhook
+        # can receive them on the next scan dispatch.
+        db.alerts_mark_all_unsent()
     return ok(out)
 
 
