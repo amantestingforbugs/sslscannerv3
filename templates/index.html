@@ -302,6 +302,23 @@ textarea.form-input{min-height:100px;resize:vertical;line-height:1.6;font-family
 .toggle-switch.on{background:var(--accent)}
 .toggle-switch.on::after{transform:translateX(16px)}
 
+/* Integrations UI */
+.integrations-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.integration-card{
+  border:1px solid var(--border);
+  background:linear-gradient(180deg,var(--bg-surface),var(--bg-raised));
+  border-radius:12px;padding:14px;box-shadow:var(--shadow-sm)
+}
+.integration-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.integration-name{font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px}
+.integration-icon{width:24px;height:24px;border-radius:7px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center}
+.integration-steps{margin:0;padding-left:18px;color:var(--text-secondary);font-size:11.5px;display:flex;flex-direction:column;gap:4px}
+.integration-card .form-group{margin-top:10px;margin-bottom:0}
+.integration-enabled{font-size:11px;color:var(--text-muted)}
+.settings-block-title{font-weight:700;margin:18px 0 10px}
+.rules-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+@media (max-width: 1100px){.integrations-grid{grid-template-columns:1fr}}
+
 /* ════════════════════════════════════════════════════════════
    TABLE
 ════════════════════════════════════════════════════════════ */
@@ -733,35 +750,51 @@ tbody tr:last-child td{border-bottom:none}
             </select>
           </div>
           <hr style="border:0;border-top:1px solid var(--border);margin:16px 0 18px">
-          <div style="font-weight:700;margin-bottom:8px">Alert Channels</div>
-          <div class="form-group">
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-telegram-enabled"> Telegram</label>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Telegram Bot Token</label>
-              <input class="form-input" id="set-telegram-token" placeholder="123456:ABC...">
+          <div class="settings-block-title">Integrations</div>
+          <div class="integrations-grid">
+            <div class="integration-card">
+              <div class="integration-head">
+                <div class="integration-name"><span class="integration-icon">💬</span>Telegram</div>
+                <label class="integration-enabled"><input type="checkbox" id="set-telegram-enabled"> Enabled</label>
+              </div>
+              <ol class="integration-steps">
+                <li>Create a bot with <code>@BotFather</code> and copy the bot token.</li>
+                <li>Add the bot to your target chat/channel.</li>
+                <li>Get the Chat ID and paste both values below.</li>
+              </ol>
+              <div class="form-group"><label class="form-label">Bot Token</label><input class="form-input" id="set-telegram-token" placeholder="123456:ABC..."></div>
+              <div class="form-group"><label class="form-label">Chat ID</label><input class="form-input" id="set-telegram-chat" placeholder="-1001234567890"></div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Telegram Chat ID</label>
-              <input class="form-input" id="set-telegram-chat" placeholder="-1001234567890">
+            <div class="integration-card">
+              <div class="integration-head">
+                <div class="integration-name"><span class="integration-icon">🟪</span>Slack</div>
+                <label class="integration-enabled"><input type="checkbox" id="set-slack-enabled"> Enabled</label>
+              </div>
+              <ol class="integration-steps">
+                <li>Open <b>Slack App → Incoming Webhooks</b>.</li>
+                <li>Enable incoming webhooks and choose the destination channel.</li>
+                <li>Copy the webhook URL and paste it below.</li>
+              </ol>
+              <div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-slack-webhook" placeholder="https://hooks.slack.com/services/..."></div>
+            </div>
+            <div class="integration-card">
+              <div class="integration-head">
+                <div class="integration-name"><span class="integration-icon">🎮</span>Discord</div>
+                <label class="integration-enabled"><input type="checkbox" id="set-discord-enabled"> Enabled</label>
+              </div>
+              <ol class="integration-steps">
+                <li>Open your channel settings and go to <b>Integrations → Webhooks</b>.</li>
+                <li>Create webhook, pick channel, and copy the webhook URL.</li>
+                <li>Paste below, save settings, then run a scan to send alerts.</li>
+              </ol>
+              <div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-discord-webhook" placeholder="https://discord.com/api/webhooks/..."></div>
             </div>
           </div>
-          <div class="form-group">
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-slack-enabled"> Slack</label>
-            <input class="form-input" id="set-slack-webhook" placeholder="https://hooks.slack.com/services/...">
-          </div>
-          <div class="form-group">
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-discord-enabled"> Discord</label>
-            <input class="form-input" id="set-discord-webhook" placeholder="https://discord.com/api/webhooks/...">
-          </div>
-          <hr style="border:0;border-top:1px solid var(--border);margin:16px 0 18px">
-          <div style="font-weight:700;margin-bottom:8px">Alert Trigger Rules</div>
-          <div class="form-row">
+
+          <div class="settings-block-title">Alert Trigger Rules</div>
+          <div class="rules-grid">
             <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-mismatch"> SSL mismatch (hostname != certificate name)</label>
             <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-expired"> Expired certs</label>
-          </div>
-          <div class="form-row">
             <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-expiring"> Expiring soon certs</label>
             <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-error"> Scan/TLS errors</label>
           </div>

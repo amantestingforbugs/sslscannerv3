@@ -162,12 +162,17 @@ class AlertManager:
             ConsoleNotifier(),
         ]
 
-    def dispatch(self, project_name: str, alerts: List[Dict]) -> None:
+    def dispatch(self, project_name: str, alerts: List[Dict]) -> bool:
         scoped = filter_alerts(alerts, self.settings)
         if not scoped:
-            return
+            return False
+        delivered = False
         for notifier in self.notifiers:
             try:
-                notifier.send_mismatch_digest(project_name, scoped)
+                sent = bool(notifier.send_mismatch_digest(project_name, scoped))
+                # Console logger should not decide whether alerts are considered delivered.
+                if sent and not isinstance(notifier, ConsoleNotifier):
+                    delivered = True
             except Exception as e:
                 logger.error("Notifier %s failed: %s", type(notifier).__name__, e)
+        return delivered
