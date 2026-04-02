@@ -421,8 +421,10 @@ def alert_add(pid, hostname, issue, detail, scan_id="", mismatch_scope=""):
     dedup = f"{pid}:{host}:{issue}"
     existing = x("SELECT id FROM alerts WHERE dedup_key=?", (dedup,)).fetchone()
     if existing:
-        x("UPDATE alerts SET scan_id=?,details=?,mismatch_scope=?,created_at=?,seen=0,sent=0 WHERE id=?",
-          (scan_id, detail, mismatch_scope or "", now(), existing["id"]))
+        # Keep existing sent/seen flags so recurring scheduler scans do not
+        # re-notify the same unresolved issue over and over.
+        x("UPDATE alerts SET scan_id=?,details=?,mismatch_scope=? WHERE id=?",
+          (scan_id, detail, mismatch_scope or "", existing["id"]))
         commit()
         return False
     x("INSERT INTO alerts(id,project_id,scan_id,hostname,issue_type,details,mismatch_scope,dedup_key,created_at)"

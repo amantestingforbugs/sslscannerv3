@@ -97,9 +97,11 @@ class WebhookNotifier:
         if not self.ready:
             return False
         text = _plain_digest(project_name, alerts)
-        payload = {"text": text}
         if self.name == "discord":
-            payload = {"content": text}
+            return self._send_discord_chunks(text)
+        return self._send_payload({"text": text})
+
+    def _send_payload(self, payload: Dict) -> bool:
         try:
             req = urllib.request.Request(
                 self.webhook_url,
@@ -110,11 +112,37 @@ class WebhookNotifier:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return 200 <= resp.status < 300
         except urllib.error.HTTPError as e:
-            logger.error("%s webhook failed: %s", self.name, e)
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            logger.error("%s webhook failed: %s body=%s", self.name, e, body[:500])
             return False
         except Exception as e:
             logger.error("%s webhook send failed: %s", self.name, e)
             return False
+
+    def _send_discord_chunks(self, text: str) -> bool:
+        # Discord webhook message content limit is 2000 chars.
+        # Split by lines and keep chunks below a safe threshold.
+        if not text:
+            return True
+        chunks: List[str] = []
+        current: List[str] = []
+        cur_len = 0
+        for line in text.splitlines():
+            add = len(line) + (1 if current else 0)
+            if cur_len + add > 1900:
+                chunks.append("\n".join(current))
+                current = [line]
+                cur_len = len(line)
+            else:
+                current.append(line)
+                cur_len += add
+        if current:
+            chunks.append("\n".join(current))
+        return all(self._send_payload({"content": chunk}) for chunk in chunks if chunk)
 
 
 class ConsoleNotifier:
