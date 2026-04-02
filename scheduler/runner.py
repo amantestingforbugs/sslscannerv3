@@ -137,7 +137,10 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
         # Send Telegram
         unsent = [a for a in alerts_unsent() if a["project_id"] == project_id]
         if unsent:
-            AlertManager(alert_settings_get()).dispatch(project["name"], unsent)
+            delivered = AlertManager(alert_settings_get()).dispatch(project["name"], unsent)
+            if not delivered:
+                log.warning("No remote alert channel accepted alerts for project '%s'; keeping alerts unsent for retry.", project["name"])
+                return sid
             for a in unsent:
                 alert_mark_sent(a["id"])
 
