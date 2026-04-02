@@ -488,6 +488,10 @@ def alerts_unsent():
 def alert_mark_sent(aid):
     x("UPDATE alerts SET sent=1 WHERE id=?", (aid,)); commit()
 
+def alerts_mark_all_unsent():
+    x("UPDATE alerts SET sent=0")
+    commit()
+
 
 def alert_mark_seen(aid):
     x("UPDATE alerts SET seen=1 WHERE id=?", (aid,))
