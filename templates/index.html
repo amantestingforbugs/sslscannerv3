@@ -773,9 +773,19 @@ tbody tr:last-child td{border-bottom:none}
             <div class="scan-stat"><div class="scan-stat-val" id="quick-expg" style="color:var(--amber)">0</div><div class="scan-stat-lbl">Expiring</div></div>
             <div class="scan-stat"><div class="scan-stat-val" id="quick-err" style="color:var(--text-muted)">0</div><div class="scan-stat-lbl">Errors</div></div>
           </div>
-          <div class="table-wrap" style="margin-top:12px;max-height:280px;overflow:auto">
+          <div class="filter-tabs" id="quick-filter-tabs" style="margin-top:12px;border-bottom:none">
+            <div class="filter-tab active" onclick="setQuickFilter('all', this)">All</div>
+            <div class="filter-tab" onclick="setQuickFilter('mismatch', this)">Mismatch</div>
+            <div class="filter-tab" onclick="setQuickFilter('expired', this)">Expired</div>
+          </div>
+          <div class="table-wrap" style="margin-top:8px;max-height:280px;overflow:auto">
             <table>
-              <thead><tr><th>Hostname</th><th>Status</th><th>CN / Error</th><th>Expiry</th></tr></thead>
+              <thead><tr>
+                <th onclick="sortQuickTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
+                <th onclick="sortQuickTable('status')">Status <span class="sort-icon">↕</span></th>
+                <th onclick="sortQuickTable('cn')">CN / Error <span class="sort-icon">↕</span></th>
+                <th onclick="sortQuickTable('expiry')">Expiry <span class="sort-icon">↕</span></th>
+              </tr></thead>
               <tbody id="quick-body">
                 <tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No quick scan results yet.</td></tr>
               </tbody>
@@ -884,11 +894,11 @@ tbody tr:last-child td{border-bottom:none}
           <table>
             <thead><tr>
               <th onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
-              <th>Status</th>
+              <th onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
               <th onclick="sortTable('cn')">Certificate CN <span class="sort-icon">↕</span></th>
               <th onclick="sortTable('expiry')">Expiry <span class="sort-icon">↕</span></th>
               <th onclick="sortTable('days_left')">Days Left <span class="sort-icon">↕</span></th>
-              <th>Issuer</th>
+              <th onclick="sortTable('issuer')">Issuer <span class="sort-icon">↕</span></th>
             </tr></thead>
             <tbody id="res-body"></tbody>
           </table>
@@ -1238,6 +1248,9 @@ let opensslRows = [];
 let opensslPid = null;
 let quickScanId = null;
 let quickRows = [];
+let quickFilter = 'all';
+let quickSortCol = 'hostname';
+let quickSortDir = 1;
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1327,6 +1340,14 @@ function sbadge(r) {
   if (r.is_mismatch) return '<span class="badge badge-mismatch">mismatch</span>';
   if (r.is_expiring) return '<span class="badge badge-expiring">expiring</span>';
   return '<span class="badge badge-ok">valid</span>';
+}
+
+function rowStatus(r) {
+  if (r.error&&!r.is_mismatch&&!r.is_expired&&!r.is_expiring&&!r.is_ok) return 'error';
+  if (r.is_expired) return 'expired';
+  if (r.is_mismatch) return 'mismatch';
+  if (r.is_expiring) return 'expiring';
+  return 'valid';
 }
 
 function daysColor(d) {
@@ -1582,16 +1603,65 @@ setInterval(() => {
 
 function renderQuickRows() {
   const body = document.getElementById('quick-body');
-  if (!quickRows.length) {
+  const rows = getQuickRowsView();
+  if (!rows.length) {
     body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No quick scan results yet.</td></tr>';
     return;
   }
-  body.innerHTML = quickRows.map(r => `<tr class="${r.is_mismatch ? 'row-mismatch' : ''}">
+  body.innerHTML = rows.map(r => `<tr class="${r.is_mismatch ? 'row-mismatch' : ''}">
     <td style="font-weight:500;font-family:var(--mono);font-size:12px">${esc(r.hostname || '—')}</td>
     <td>${sbadge(r)}</td>
     <td style="font-size:12px;color:var(--text-secondary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.cn || r.error || '—')}">${esc(r.cn || r.error || '—')}</td>
     <td style="font-size:12px">${r.expiry || '—'}</td>
   </tr>`).join('');
+}
+
+function getQuickRowsView() {
+  const filtered = quickRows.filter(r => {
+    if (quickFilter === 'mismatch') return !!r.is_mismatch;
+    if (quickFilter === 'expired') return !!r.is_expired;
+    return true;
+  });
+  const sorted = [...filtered].sort((a, b) => {
+    const av = quickSortValue(a, quickSortCol);
+    const bv = quickSortValue(b, quickSortCol);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * quickSortDir;
+    return String(av).localeCompare(String(bv)) * quickSortDir;
+  });
+  return sorted;
+}
+
+function quickSortValue(row, col) {
+  if (col === 'status') return rowStatus(row);
+  if (col === 'cn') return row.cn || row.error || '';
+  return row[col] ?? '';
+}
+
+function updateQuickSortHeader() {
+  const headers = document.querySelectorAll('#quick-filter-tabs + .table-wrap thead th');
+  const colMap = ['hostname', 'status', 'cn', 'expiry'];
+  headers.forEach((th, idx) => {
+    th.classList.remove('sorted');
+    const si = th.querySelector('.sort-icon');
+    if (si) si.textContent = '↕';
+    if (colMap[idx] === quickSortCol) {
+      th.classList.add('sorted');
+      if (si) si.textContent = quickSortDir > 0 ? '↑' : '↓';
+    }
+  });
+}
+
+function sortQuickTable(col) {
+  if (quickSortCol === col) quickSortDir *= -1; else { quickSortCol = col; quickSortDir = 1; }
+  updateQuickSortHeader();
+  renderQuickRows();
+}
+
+function setQuickFilter(filter, tabEl) {
+  quickFilter = filter;
+  document.querySelectorAll('#quick-filter-tabs .filter-tab').forEach(t => t.classList.remove('active'));
+  if (tabEl) tabEl.classList.add('active');
+  renderQuickRows();
 }
 
 function updateQuickProgress(s) {
@@ -1620,6 +1690,11 @@ async function startQuickScan() {
   const btn = document.getElementById('quick-scan-btn');
   btn.disabled = true;
   quickRows = [];
+  quickFilter = 'all';
+  quickSortCol = 'hostname';
+  quickSortDir = 1;
+  document.querySelectorAll('#quick-filter-tabs .filter-tab').forEach((t, idx) => t.classList.toggle('active', idx === 0));
+  updateQuickSortHeader();
   renderQuickRows();
   updateQuickProgress({ status: 'starting', total: 0, done: 0 });
   try {
@@ -1647,6 +1722,7 @@ async function startQuickScan() {
 // ════════════════════════════════════════════════════════════
 async function loadProjects() {
   try {
+    updateQuickSortHeader();
     if (quickScanId) {
       fetch(`/api/quick-scan/${quickScanId}`).then(r => r.json()).then(({ ok, data }) => {
         if (!ok || !data) return;
@@ -1954,37 +2030,49 @@ async function loadResults(filter, tabEl, page) {
     allResRows = d.results||[];
     totalPages = d.pages||1;
     document.getElementById('res-count').textContent = `${fmt(d.total)} results`;
-    renderResTable(allResRows);
+    applyResTableView();
     renderResPagination(d);
   } catch {}
 }
 
 function sortTable(col) {
   if (sortCol===col) sortDir*=-1; else { sortCol=col; sortDir=1; }
-  document.querySelectorAll('thead th').forEach(th => {
+  const headers = document.querySelectorAll('#results-card thead th');
+  headers.forEach(th => {
     th.classList.remove('sorted');
     const si = th.querySelector('.sort-icon');
     if (si) si.textContent='↕';
   });
-  const headers = document.querySelectorAll('thead th');
-  const colMap = ['hostname','','cn','expiry','days_left','issuer'];
+  const colMap = ['hostname','status','cn','expiry','days_left','issuer'];
   const idx = colMap.indexOf(col);
   if (idx>=0 && headers[idx]) {
     headers[idx].classList.add('sorted');
     const si = headers[idx].querySelector('.sort-icon');
     if (si) si.textContent = sortDir>0?'↑':'↓';
   }
-  const sorted = [...allResRows].sort((a,b) => {
-    const av = a[col]??'', bv = b[col]??'';
-    if (typeof av==='number') return (av-bv)*sortDir;
-    return String(av).localeCompare(String(bv))*sortDir;
+  applyResTableView();
+}
+
+function filterResTable() {
+  applyResTableView();
+}
+
+function applyResTableView() {
+  const q = document.getElementById('res-search').value.toLowerCase();
+  const filtered = q ? allResRows.filter(r => (r.hostname || '').toLowerCase().includes(q)) : allResRows;
+  const sorted = [...filtered].sort((a, b) => {
+    const av = sortValue(a, sortCol);
+    const bv = sortValue(b, sortCol);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sortDir;
+    return String(av).localeCompare(String(bv)) * sortDir;
   });
   renderResTable(sorted);
 }
 
-function filterResTable() {
-  const q = document.getElementById('res-search').value.toLowerCase();
-  renderResTable(q ? allResRows.filter(r=>(r.hostname||'').toLowerCase().includes(q)) : allResRows);
+function sortValue(row, col) {
+  if (!col) return row.hostname || '';
+  if (col === 'status') return rowStatus(row);
+  return row[col] ?? '';
 }
 
 function renderResTable(rows) {
