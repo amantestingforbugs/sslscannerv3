@@ -31,6 +31,9 @@ _sse_lock = threading.Lock()
 _openssl_threads: dict[str, threading.Thread] = {}
 _openssl_status: dict[str, dict] = {}
 _openssl_lock = threading.Lock()
+_quick_scan_threads: dict[str, threading.Thread] = {}
+_quick_scan_state: dict[str, dict] = {}
+_quick_scan_lock = threading.Lock()
 
 
 def broadcast(event: str, data: dict):
@@ -117,6 +120,117 @@ def _collect_openssl_hosts(pid: str) -> list[str]:
         for r in db.x("SELECT hostname FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchall()
     }
     return sorted({h for h in (base_hosts | sf_hosts) if h})
+
+
+def _start_quick_scan(hosts: list[str]) -> str:
+    sid = db.uid()
+    with _quick_scan_lock:
+        _quick_scan_state[sid] = {
+            "id": sid,
+            "status": "running",
+            "source": "quick_scan",
+            "total": len(hosts),
+            "done": 0,
+            "ok": 0,
+            "mismatches": 0,
+            "expired": 0,
+            "expiring": 0,
+            "errors": 0,
+            "hosts": hosts,
+            "rows": [],
+            "started_at": db.now(),
+            "finished_at": None,
+        }
+    th = threading.Thread(target=_quick_scan_worker, args=(sid,), daemon=True, name=f"quick-scan-{sid[:8]}")
+    with _quick_scan_lock:
+        _quick_scan_threads[sid] = th
+    th.start()
+    return sid
+
+
+def _quick_scan_worker(sid: str):
+    from core.ssl_checker import run_checker
+
+    with _quick_scan_lock:
+        state = _quick_scan_state.get(sid)
+        hosts = list(state.get("hosts") or []) if state else []
+    if not hosts:
+        with _quick_scan_lock:
+            if sid in _quick_scan_state:
+                _quick_scan_state[sid]["status"] = "error"
+                _quick_scan_state[sid]["finished_at"] = db.now()
+        return
+
+    def _on_result(done: int, total: int, row: dict):
+        row = dict(row or {})
+        row.setdefault("hostname", "")
+        row.setdefault("cn", "")
+        row.setdefault("issuer", "")
+        row.setdefault("expiry", "")
+        row.setdefault("days_left", None)
+        row["is_expiring"] = bool(row.get("is_expiring_soon"))
+        with _quick_scan_lock:
+            state = _quick_scan_state.get(sid)
+            if not state:
+                return
+            state["rows"].append(row)
+            state["done"] = done
+            state["ok"] += 1 if row.get("is_ok") else 0
+            state["mismatches"] += 1 if row.get("is_mismatch") else 0
+            state["expired"] += 1 if row.get("is_expired") else 0
+            state["expiring"] += 1 if row.get("is_expiring_soon") else 0
+            state["errors"] += 1 if row.get("error") else 0
+            payload = {
+                "id": sid,
+                "status": "running",
+                "total": total,
+                "done": done,
+                "ok": state["ok"],
+                "mismatches": state["mismatches"],
+                "expired": state["expired"],
+                "expiring": state["expiring"],
+                "errors": state["errors"],
+            }
+        broadcast("quick_scan_row", {"scan_id": sid, "row": row})
+        broadcast("quick_scan_update", payload)
+
+    try:
+        run_checker(hosts, progress_callback=_on_result, collect_results=False)
+        with _quick_scan_lock:
+            state = _quick_scan_state.get(sid)
+            if state:
+                state["status"] = "done"
+                state["finished_at"] = db.now()
+                state["hosts"] = []
+                payload = {
+                    "id": sid,
+                    "status": "done",
+                    "total": state["total"],
+                    "done": state["done"],
+                    "ok": state["ok"],
+                    "mismatches": state["mismatches"],
+                    "expired": state["expired"],
+                    "expiring": state["expiring"],
+                    "errors": state["errors"],
+                    "finished_at": state["finished_at"],
+                }
+        broadcast("quick_scan_update", payload)
+    except Exception as e:
+        with _quick_scan_lock:
+            state = _quick_scan_state.get(sid)
+            if state:
+                state["status"] = "error"
+                state["error"] = str(e)
+                state["finished_at"] = db.now()
+                state["hosts"] = []
+                payload = {
+                    "id": sid,
+                    "status": "error",
+                    "error": str(e),
+                    "total": state["total"],
+                    "done": state["done"],
+                }
+        broadcast("quick_scan_update", payload)
 
 
 def _start_openssl_worker(pid: str, source: str = "manual") -> bool:
@@ -335,6 +449,33 @@ def get_results(sid):
 @api.get("/active-scans")
 def active_scans():
     return ok(list_active_scans())
+
+
+@api.post("/quick-scan")
+def start_quick_scan():
+    d = request.json or {}
+    hosts_raw = d.get("hosts", "") or ""
+    hosts = parse_hosts_file(hosts_raw)
+    hosts = sorted({_normalize_hostname(h) for h in hosts if _normalize_hostname(h)})
+    if not hosts:
+        return err("Paste at least one valid hostname")
+    if len(hosts) > 5000:
+        return err("Quick scan supports up to 5000 hosts at once")
+    sid = _start_quick_scan(hosts)
+    return ok({"scan_id": sid, "total": len(hosts), "status": "running"})
+
+
+@api.get("/quick-scan/<sid>")
+def quick_scan_status(sid):
+    with _quick_scan_lock:
+        state = dict(_quick_scan_state.get(sid) or {})
+    if not state:
+        return err("Quick scan not found", 404)
+    rows = state.get("rows", [])
+    state["rows_total"] = len(rows)
+    state["rows"] = rows[-200:]
+    state.pop("hosts", None)
+    return ok(state)
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────

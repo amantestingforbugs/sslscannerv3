@@ -745,6 +745,44 @@ tbody tr:last-child td{border-bottom:none}
         </div>
         <button class="btn btn-primary" onclick="openModal('createModal')">+ New Project</button>
       </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Quick Scan (No Project Needed)</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label">Paste subdomains / hostnames</label>
+            <textarea class="form-input" id="quick-hosts" placeholder="api.example.com&#10;dev.example.com&#10;https://staging.example.com"></textarea>
+            <div class="form-hint">One host per line. This scan does not create a project.</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <div class="form-hint" id="quick-meta">Idle</div>
+            <button class="btn btn-primary btn-sm" id="quick-scan-btn" onclick="startQuickScan()">Scan Now</button>
+          </div>
+          <div style="margin-top:12px">
+            <div class="progress-wrap"><div class="progress-bar" id="quick-prog-bar" style="width:0%"></div></div>
+            <div class="progress-label">
+              <span><span id="quick-done">0</span> / <span id="quick-total">0</span> hosts</span>
+              <span id="quick-pct" style="color:var(--accent);font-weight:600">0%</span>
+            </div>
+          </div>
+          <div class="scan-live-stats" style="margin-top:10px">
+            <div class="scan-stat"><div class="scan-stat-val" id="quick-ok" style="color:var(--green)">0</div><div class="scan-stat-lbl">Valid</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="quick-mis" style="color:var(--red)">0</div><div class="scan-stat-lbl">Mismatch</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="quick-exp" style="color:var(--orange)">0</div><div class="scan-stat-lbl">Expired</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="quick-expg" style="color:var(--amber)">0</div><div class="scan-stat-lbl">Expiring</div></div>
+            <div class="scan-stat"><div class="scan-stat-val" id="quick-err" style="color:var(--text-muted)">0</div><div class="scan-stat-lbl">Errors</div></div>
+          </div>
+          <div class="table-wrap" style="margin-top:12px;max-height:280px;overflow:auto">
+            <table>
+              <thead><tr><th>Hostname</th><th>Status</th><th>CN / Error</th><th>Expiry</th></tr></thead>
+              <tbody id="quick-body">
+                <tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No quick scan results yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div class="projects-grid" id="projects-grid">
         <div class="empty" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No projects yet</div><p class="empty-desc">Create one to start monitoring.</p></div>
       </div>
@@ -1198,6 +1236,8 @@ let allAlerts = [], alertsCurPage = 1, alertsTotalPages = 1;
 let projectsCache = [];
 let opensslRows = [];
 let opensslPid = null;
+let quickScanId = null;
+let quickRows = [];
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1370,6 +1410,26 @@ function connectSSE() {
   es.addEventListener('project_created', () => {
     if (document.getElementById('page-projects').classList.contains('active')) loadProjects();
   });
+  es.addEventListener('quick_scan_row', e => {
+    const d = JSON.parse(e.data || '{}');
+    if (!quickScanId || d.scan_id !== quickScanId || !d.row) return;
+    const idx = quickRows.findIndex(r => r.hostname === d.row.hostname);
+    if (idx >= 0) quickRows[idx] = d.row; else quickRows.push(d.row);
+    quickRows.sort((a, b) => (a.hostname || '').localeCompare(b.hostname || ''));
+    renderQuickRows();
+  });
+  es.addEventListener('quick_scan_update', e => {
+    const d = JSON.parse(e.data || '{}');
+    if (!quickScanId || d.id !== quickScanId) return;
+    updateQuickProgress(d);
+    if (d.status === 'done') {
+      document.getElementById('quick-scan-btn').disabled = false;
+      toast('Quick scan complete', 'ok');
+    } else if (d.status === 'error') {
+      document.getElementById('quick-scan-btn').disabled = false;
+      toast(d.error || 'Quick scan failed', 'err');
+    }
+  });
 
   es.onerror = () => {
     // Reconnect after 3s
@@ -1520,11 +1580,82 @@ setInterval(() => {
   if (document.getElementById('page-openssl').classList.contains('active') && opensslPid) loadOpenSSLRows();
 }, 12000);
 
+function renderQuickRows() {
+  const body = document.getElementById('quick-body');
+  if (!quickRows.length) {
+    body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">No quick scan results yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = quickRows.map(r => `<tr class="${r.is_mismatch ? 'row-mismatch' : ''}">
+    <td style="font-weight:500;font-family:var(--mono);font-size:12px">${esc(r.hostname || '—')}</td>
+    <td>${sbadge(r)}</td>
+    <td style="font-size:12px;color:var(--text-secondary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.cn || r.error || '—')}">${esc(r.cn || r.error || '—')}</td>
+    <td style="font-size:12px">${r.expiry || '—'}</td>
+  </tr>`).join('');
+}
+
+function updateQuickProgress(s) {
+  const done = s.done || 0;
+  const total = s.total || 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  document.getElementById('quick-prog-bar').style.width = pct + '%';
+  document.getElementById('quick-done').textContent = fmt(done);
+  document.getElementById('quick-total').textContent = fmt(total);
+  document.getElementById('quick-pct').textContent = pct + '%';
+  document.getElementById('quick-ok').textContent = fmt(s.ok || 0);
+  document.getElementById('quick-mis').textContent = fmt(s.mismatches || 0);
+  document.getElementById('quick-exp').textContent = fmt(s.expired || 0);
+  document.getElementById('quick-expg').textContent = fmt(s.expiring || 0);
+  document.getElementById('quick-err').textContent = fmt(s.errors || 0);
+  const meta = document.getElementById('quick-meta');
+  meta.textContent = `Status: ${s.status || 'idle'}${s.finished_at ? ` · Finished: ${new Date(s.finished_at).toLocaleString()}` : ''}`;
+}
+
+async function startQuickScan() {
+  const hosts = document.getElementById('quick-hosts').value.trim();
+  if (!hosts) {
+    toast('Paste at least one subdomain/hostname', 'err');
+    return;
+  }
+  const btn = document.getElementById('quick-scan-btn');
+  btn.disabled = true;
+  quickRows = [];
+  renderQuickRows();
+  updateQuickProgress({ status: 'starting', total: 0, done: 0 });
+  try {
+    const { ok, data, error } = await fetch('/api/quick-scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hosts })
+    }).then(r => r.json());
+    if (!ok) {
+      btn.disabled = false;
+      toast(error || 'Quick scan failed to start', 'err');
+      return;
+    }
+    quickScanId = data.scan_id;
+    updateQuickProgress({ status: 'running', total: data.total, done: 0, ok: 0, mismatches: 0, expired: 0, expiring: 0, errors: 0 });
+    toast(`Quick scan started for ${fmt(data.total)} hosts`, 'ok');
+  } catch {
+    btn.disabled = false;
+    toast('Quick scan failed to start', 'err');
+  }
+}
+
 // ════════════════════════════════════════════════════════════
 // PROJECTS
 // ════════════════════════════════════════════════════════════
 async function loadProjects() {
   try {
+    if (quickScanId) {
+      fetch(`/api/quick-scan/${quickScanId}`).then(r => r.json()).then(({ ok, data }) => {
+        if (!ok || !data) return;
+        quickRows = data.rows || [];
+        updateQuickProgress(data);
+        renderQuickRows();
+        if (data.status !== 'running') document.getElementById('quick-scan-btn').disabled = false;
+      }).catch(() => {});
+    }
     const { data: projs } = await apiJSON('/api/projects');
     projectsCache = projs || [];
     const el = document.getElementById('projects-grid');
