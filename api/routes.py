@@ -200,7 +200,16 @@ def _quick_scan_worker(sid: str):
         broadcast("quick_scan_update", payload)
 
     try:
-        run_checker(hosts, progress_callback=_on_result, collect_results=False)
+        # Quick scans run on-demand and often from low-resource dynos/containers.
+        # Keep worker count conservative to avoid "can't start new thread" and
+        # premature scan termination a few seconds after start.
+        quick_workers = max(4, min(32, len(hosts)))
+        run_checker(
+            hosts,
+            max_workers=quick_workers,
+            progress_callback=_on_result,
+            collect_results=False,
+        )
         with _quick_scan_lock:
             state = _quick_scan_state.get(sid)
             if state:
