@@ -459,8 +459,8 @@ def start_quick_scan():
     hosts = sorted({_normalize_hostname(h) for h in hosts if _normalize_hostname(h)})
     if not hosts:
         return err("Paste at least one valid hostname")
-    if len(hosts) > 5000:
-        return err("Quick scan supports up to 5000 hosts at once")
+    if len(hosts) > 50000:
+        return err("Quick scan supports up to 50000 hosts at once")
     sid = _start_quick_scan(hosts)
     return ok({"scan_id": sid, "total": len(hosts), "status": "running"})
 
