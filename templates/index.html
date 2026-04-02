@@ -378,6 +378,8 @@ tbody tr:last-child td{border-bottom:none}
 .badge-error{background:var(--bg-raised);color:var(--text-muted);border:1px solid var(--border)}
 .badge-running{background:var(--green-dim);color:var(--green);animation:blink .9s step-end infinite}
 .badge-done{background:var(--accent-dim);color:var(--accent)}
+.badge-paused{background:var(--amber-dim);color:var(--amber)}
+.badge-stopped{background:var(--bg-raised);color:var(--text-muted);border:1px solid var(--border)}
 .badge-sf{background:var(--purple-dim);color:var(--purple)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
 
@@ -927,7 +929,11 @@ tbody tr:last-child td{border-bottom:none}
       <div class="card" id="scan-prog-card" style="display:none">
         <div class="card-header">
           <span class="card-title">Scan in Progress</span>
-          <span class="badge badge-running" id="prog-badge">RUNNING</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn btn-sm" id="scan-pause-btn" onclick="togglePauseScan()">⏸ Pause</button>
+            <button class="btn btn-sm btn-danger" id="scan-stop-btn" onclick="stopActiveScan()">⏹ Stop</button>
+            <span class="badge badge-running" id="prog-badge">RUNNING</span>
+          </div>
         </div>
         <div class="card-body">
           <div class="progress-wrap"><div class="progress-bar" id="prog-bar" style="width:0%"></div></div>
@@ -1324,6 +1330,7 @@ tbody tr:last-child td{border-bottom:none}
 let curPid = null, curSid = null, curFilter = 'all', curPage = 1, totalPages = 1;
 let allResRows = [], sortCol = null, sortDir = 1;
 let scanPollTimer = null;
+let activeScanStatus = 'running';
 let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [], alertsCurPage = 1, alertsTotalPages = 1;
 let projectsCache = [];
@@ -1538,6 +1545,8 @@ function connectSSE() {
     const s = JSON.parse(e.data);
     // Update scan progress if we're watching this project
     if (s.project_id === curPid) {
+      if (!curSid) curSid = s.id;
+      document.getElementById('scan-prog-card').style.display='';
       updateScanProgress(s);
     }
     // Refresh dashboard active scans section
@@ -1977,6 +1986,16 @@ async function openProject(pid) {
       showResults(p.latest_scan);
     }
     if (p.latest_scan?.status==='running') {
+      curSid = p.latest_scan.id;
+      activeScanStatus = 'running';
+      syncScanActionButtons();
+      document.getElementById('scan-prog-card').style.display='';
+      startPoll();
+    }
+    if (['paused','stopping'].includes(p.latest_scan?.status)) {
+      curSid = p.latest_scan.id;
+      activeScanStatus = p.latest_scan.status;
+      syncScanActionButtons();
       document.getElementById('scan-prog-card').style.display='';
       startPoll();
     }
@@ -2136,7 +2155,12 @@ dz.addEventListener('drop', e=>{
 async function doScan() {
   const { ok, error } = await fetch(`/api/projects/${curPid}/scan`,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
+  const { data: scans } = await fetch(`/api/projects/${curPid}/scans`).then(r=>r.json());
+  const latest = (scans || []).find(s => ['running','paused','stopping'].includes(s.status));
+  if (latest) curSid = latest.id;
   toast('Scan started!','ok');
+  activeScanStatus = 'running';
+  syncScanActionButtons();
   document.getElementById('scan-prog-card').style.display='';
   document.getElementById('results-card').style.display='none';
   startPoll();
@@ -2147,8 +2171,10 @@ function startPoll() {
   scanPollTimer = setInterval(async () => {
     try {
       const { data: scans } = await fetch(`/api/projects/${curPid}/scans`).then(r=>r.json());
-      const run = (scans||[]).find(s=>s.status==='running');
+      const run = (scans||[]).find(s=>['running','paused','stopping'].includes(s.status));
       const done = (scans||[]).find(s=>s.status==='done');
+      const stopped = (scans||[]).find(s=>s.status==='stopped');
+      const errored = (scans||[]).find(s=>s.status==='error');
       if (run) updateScanProgress(run);
       if (!run && done) {
         clearInterval(scanPollTimer);
@@ -2159,22 +2185,74 @@ function startPoll() {
         pollBadge();
         toast(`Scan complete — ${fmt(done.mismatches)} mismatch(es)`, done.mismatches>0?'err':'ok');
       }
+      if (!run && stopped) {
+        clearInterval(scanPollTimer);
+        document.getElementById('scan-prog-card').style.display='none';
+        loadHistory(curPid);
+        toast('Scan stopped', 'err');
+      }
+      if (!run && errored) {
+        clearInterval(scanPollTimer);
+        document.getElementById('scan-prog-card').style.display='none';
+        loadHistory(curPid);
+      }
     } catch {}
   }, 2500);
 }
 
 function updateScanProgress(s) {
+  activeScanStatus = s.status || 'running';
   const pct = s.total>0?Math.round((s.done||s.live_progress||s.progress||0)/s.total*100):0;
   const done = s.done||s.live_progress||s.progress||0;
   document.getElementById('prog-bar').style.width = pct+'%';
   document.getElementById('prog-done').textContent = fmt(done);
   document.getElementById('prog-total').textContent = fmt(s.total);
   document.getElementById('prog-pct').textContent = pct+'%';
+  const badge = document.getElementById('prog-badge');
+  if (s.status === 'paused') {
+    badge.className = 'badge badge-paused';
+    badge.textContent = 'PAUSED';
+  } else if (s.status === 'stopping') {
+    badge.className = 'badge badge-stopped';
+    badge.textContent = 'STOPPING';
+  } else {
+    badge.className = 'badge badge-running';
+    badge.textContent = 'RUNNING';
+  }
+  syncScanActionButtons();
   document.getElementById('lv-ok').textContent = fmt(s.ok);
   document.getElementById('lv-mis').textContent = fmt(s.mismatches);
   document.getElementById('lv-exp').textContent = fmt(s.expired);
   document.getElementById('lv-expg').textContent = fmt(s.expiring);
   document.getElementById('lv-err').textContent = fmt(s.errors);
+}
+
+function syncScanActionButtons() {
+  const pauseBtn = document.getElementById('scan-pause-btn');
+  const stopBtn = document.getElementById('scan-stop-btn');
+  if (!pauseBtn || !stopBtn) return;
+  pauseBtn.disabled = activeScanStatus === 'stopping';
+  stopBtn.disabled = activeScanStatus === 'stopping';
+  pauseBtn.textContent = activeScanStatus === 'paused' ? '▶ Resume' : '⏸ Pause';
+}
+
+async function togglePauseScan() {
+  if (!curSid) return;
+  const route = activeScanStatus === 'paused' ? 'resume' : 'pause';
+  const { ok, error, data } = await fetch(`/api/scans/${curSid}/${route}`, { method: 'POST' }).then(r => r.json());
+  if (!ok) { toast(error || 'Unable to update scan state', 'err'); return; }
+  activeScanStatus = data?.status || (route === 'pause' ? 'paused' : 'running');
+  syncScanActionButtons();
+  toast(activeScanStatus === 'paused' ? 'Scan paused' : 'Scan resumed', 'ok');
+}
+
+async function stopActiveScan() {
+  if (!curSid) return;
+  const { ok, error } = await fetch(`/api/scans/${curSid}/stop`, { method: 'POST' }).then(r => r.json());
+  if (!ok) { toast(error || 'Unable to stop scan', 'err'); return; }
+  activeScanStatus = 'stopping';
+  syncScanActionButtons();
+  toast('Stopping scan…', 'ok');
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2296,7 +2374,7 @@ async function loadHistory(pid) {
     el.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Status</th><th>Total</th><th>Mismatches</th><th>Expired</th><th>Trigger</th><th></th></tr></thead><tbody>`+
       scans.map(s=>`<tr>
         <td style="font-size:12px;color:var(--text-secondary)">${s.finished_at?new Date(s.finished_at).toLocaleString():rel(s.started_at)}</td>
-        <td><span class="badge ${s.status==='done'?'badge-done':s.status==='running'?'badge-running':'badge-error'}">${s.status}</span></td>
+        <td><span class="badge ${s.status==='done'?'badge-done':s.status==='running'?'badge-running':s.status==='paused'?'badge-paused':s.status==='stopped'?'badge-stopped':'badge-error'}">${s.status}</span></td>
         <td>${fmt(s.total)}</td>
         <td style="color:${s.mismatches>0?'var(--red)':'var(--text-primary)'}">${fmt(s.mismatches)}</td>
         <td style="color:${s.expired>0?'var(--orange)':'var(--text-primary)'}">${fmt(s.expired)}</td>

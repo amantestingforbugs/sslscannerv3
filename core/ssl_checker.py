@@ -192,6 +192,8 @@ def run_checker(
     max_workers: int = 50,
     progress_callback: Optional[Callable] = None,
     collect_results: bool = True,
+    pause_event=None,
+    stop_event=None,
 ) -> List[Dict]:
     """
     Run SSL checks concurrently against a list of hostnames.
@@ -217,8 +219,21 @@ def run_checker(
                 break
 
         while inflight:
+            if stop_event and stop_event.is_set():
+                break
+            while pause_event and pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    break
+                try:
+                    pause_event.wait(0.2)
+                except Exception:
+                    break
+            if stop_event and stop_event.is_set():
+                break
             finished, inflight = wait(inflight, return_when=FIRST_COMPLETED)
             for future in finished:
+                if stop_event and stop_event.is_set():
+                    break
                 done += 1
                 result = future.result()
                 if collect_results:
@@ -232,6 +247,9 @@ def run_checker(
                     inflight.add(executor.submit(get_cert_info, next(host_iter)))
                 except StopIteration:
                     pass
+        if stop_event and stop_event.is_set():
+            for future in inflight:
+                future.cancel()
 
     return results or []
 

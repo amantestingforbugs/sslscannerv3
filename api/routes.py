@@ -19,7 +19,14 @@ from flask import Blueprint, request, jsonify, Response, stream_with_context
 import db.database as db
 from core.ssl_checker import parse_hosts_file
 from core.observability import subscribe, get_logs
-from scheduler.runner import run_project_scan_async, get_scan_state, list_active_scans
+from scheduler.runner import (
+    run_project_scan_async,
+    get_scan_state,
+    list_active_scans,
+    pause_scan,
+    resume_scan,
+    stop_scan,
+)
 
 log = logging.getLogger(__name__)
 api = Blueprint("api", __name__, url_prefix="/api")
@@ -448,7 +455,9 @@ def get_scan(sid):
     s = db.scan_get(sid)
     if not s: return err("Not found", 404)
     live = get_scan_state(sid)
-    if live: s["live_progress"] = live.get("progress", 0)
+    if live:
+        s["live_progress"] = live.get("progress", 0)
+        s["live_status"] = live.get("status")
     return ok(s)
 
 
@@ -463,6 +472,42 @@ def get_results(sid):
 @api.get("/active-scans")
 def active_scans():
     return ok(list_active_scans())
+
+
+@api.post("/scans/<sid>/pause")
+def pause_scan_route(sid):
+    if not db.scan_get(sid):
+        return err("Scan not found", 404)
+    if not pause_scan(sid):
+        return err("Scan is not running", 409)
+    live = get_scan_state(sid) or {"id": sid, "status": "paused"}
+    db.scan_update(sid, status="paused")
+    broadcast("scan_update", {"id": sid, **live, "status": "paused"})
+    return ok({"scan_id": sid, "status": "paused"})
+
+
+@api.post("/scans/<sid>/resume")
+def resume_scan_route(sid):
+    if not db.scan_get(sid):
+        return err("Scan not found", 404)
+    if not resume_scan(sid):
+        return err("Scan is not paused", 409)
+    live = get_scan_state(sid) or {"id": sid, "status": "running"}
+    db.scan_update(sid, status="running")
+    broadcast("scan_update", {"id": sid, **live, "status": "running"})
+    return ok({"scan_id": sid, "status": "running"})
+
+
+@api.post("/scans/<sid>/stop")
+def stop_scan_route(sid):
+    if not db.scan_get(sid):
+        return err("Scan not found", 404)
+    if not stop_scan(sid):
+        return err("Scan is not active", 409)
+    live = get_scan_state(sid) or {"id": sid, "status": "stopping"}
+    db.scan_update(sid, status="stopping")
+    broadcast("scan_update", {"id": sid, **live, "status": "stopping"})
+    return ok({"scan_id": sid, "status": "stopping"})
 
 
 @api.post("/quick-scan")
