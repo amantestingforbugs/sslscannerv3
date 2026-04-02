@@ -1248,9 +1248,11 @@ let opensslRows = [];
 let opensslPid = null;
 let quickScanId = null;
 let quickRows = [];
+let quickRowsByHost = new Map();
 let quickFilter = 'all';
 let quickSortCol = 'hostname';
 let quickSortDir = 1;
+let quickRenderTimer = null;
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1434,10 +1436,9 @@ function connectSSE() {
   es.addEventListener('quick_scan_row', e => {
     const d = JSON.parse(e.data || '{}');
     if (!quickScanId || d.scan_id !== quickScanId || !d.row) return;
-    const idx = quickRows.findIndex(r => r.hostname === d.row.hostname);
-    if (idx >= 0) quickRows[idx] = d.row; else quickRows.push(d.row);
-    quickRows.sort((a, b) => (a.hostname || '').localeCompare(b.hostname || ''));
-    renderQuickRows();
+    const key = d.row.hostname || `${Date.now()}-${Math.random()}`;
+    quickRowsByHost.set(key, d.row);
+    scheduleQuickRender();
   });
   es.addEventListener('quick_scan_update', e => {
     const d = JSON.parse(e.data || '{}');
@@ -1602,6 +1603,7 @@ setInterval(() => {
 }, 12000);
 
 function renderQuickRows() {
+  quickRows = Array.from(quickRowsByHost.values());
   const body = document.getElementById('quick-body');
   const rows = getQuickRowsView();
   if (!rows.length) {
@@ -1614,6 +1616,14 @@ function renderQuickRows() {
     <td style="font-size:12px;color:var(--text-secondary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.cn || r.error || '—')}">${esc(r.cn || r.error || '—')}</td>
     <td style="font-size:12px">${r.expiry || '—'}</td>
   </tr>`).join('');
+}
+
+function scheduleQuickRender() {
+  if (quickRenderTimer) return;
+  quickRenderTimer = setTimeout(() => {
+    quickRenderTimer = null;
+    renderQuickRows();
+  }, 180);
 }
 
 function getQuickRowsView() {
@@ -1690,6 +1700,7 @@ async function startQuickScan() {
   const btn = document.getElementById('quick-scan-btn');
   btn.disabled = true;
   quickRows = [];
+  quickRowsByHost = new Map();
   quickFilter = 'all';
   quickSortCol = 'hostname';
   quickSortDir = 1;
@@ -1726,9 +1737,8 @@ async function loadProjects() {
     if (quickScanId) {
       fetch(`/api/quick-scan/${quickScanId}`).then(r => r.json()).then(({ ok, data }) => {
         if (!ok || !data) return;
-        quickRows = data.rows || [];
         updateQuickProgress(data);
-        renderQuickRows();
+        scheduleQuickRender();
         if (data.status !== 'running') document.getElementById('quick-scan-btn').disabled = false;
       }).catch(() => {});
     }

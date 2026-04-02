@@ -473,7 +473,8 @@ def quick_scan_status(sid):
         return err("Quick scan not found", 404)
     rows = state.get("rows", [])
     state["rows_total"] = len(rows)
-    state["rows"] = rows[-200:]
+    # Keep status payload tiny so polling remains fast even for large scans.
+    state.pop("rows", None)
     state.pop("hosts", None)
     return ok(state)
 
