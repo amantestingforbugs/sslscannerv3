@@ -560,35 +560,39 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
     offset = (page - 1) * per_page
     rows = x(
         f"""
-        WITH latest_subfinder_result AS (
+        WITH filtered_hosts AS (
           SELECT
-            rr.project_id,
-            rr.hostname,
-            rr.cn,
-            rr.issuer,
-            rr.expiry,
-            rr.days_left,
-            rr.is_mismatch,
-            rr.same_base,
-            rr.is_expired,
-            rr.is_expiring,
-            rr.is_ok,
-            rr.error,
-            rr.checked_at,
-            ROW_NUMBER() OVER (
-              PARTITION BY rr.project_id, rr.hostname
+            h.project_id,
+            h.hostname,
+            h.first_seen,
+            h.last_seen,
+            h.ssl_scanned
+          FROM subfinder_hosts h
+          {where}
+          ORDER BY h.first_seen DESC
+          LIMIT ? OFFSET ?
+        ),
+        latest_result AS (
+          SELECT
+            fh.project_id,
+            fh.hostname,
+            (
+              SELECT rr.id
+              FROM results rr
+              JOIN scans ss ON ss.id = rr.scan_id
+              WHERE rr.project_id = fh.project_id
+                AND rr.hostname = fh.hostname
+                AND ss.triggered_by LIKE 'subfinder:%'
               ORDER BY rr.checked_at DESC
-            ) AS rn
-          FROM results rr
-          JOIN scans ss ON ss.id = rr.scan_id
-          WHERE rr.project_id = ?
-            AND ss.triggered_by LIKE 'subfinder:%'
+              LIMIT 1
+            ) AS result_id
+          FROM filtered_hosts fh
         )
         SELECT
-          h.hostname,
-          h.first_seen,
-          h.last_seen,
-          h.ssl_scanned,
+          fh.hostname,
+          fh.first_seen,
+          fh.last_seen,
+          fh.ssl_scanned,
           r.cn,
           r.issuer,
           r.expiry,
@@ -600,16 +604,14 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
           r.is_ok,
           r.error,
           r.checked_at
-        FROM subfinder_hosts h
-        LEFT JOIN latest_subfinder_result r
-          ON r.project_id = h.project_id
-         AND r.hostname = h.hostname
-         AND r.rn = 1
-        {where}
-        ORDER BY h.first_seen DESC
-        LIMIT ? OFFSET ?
+        FROM filtered_hosts fh
+        LEFT JOIN latest_result lr
+          ON lr.project_id = fh.project_id
+         AND lr.hostname = fh.hostname
+        LEFT JOIN results r ON r.id = lr.result_id
+        ORDER BY fh.first_seen DESC
         """,
-        [pid] + params + [per_page, offset],
+        params + [per_page, offset],
     ).fetchall()
     return {
         "rows": [dict(r) for r in rows],
