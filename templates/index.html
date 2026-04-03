@@ -1344,6 +1344,7 @@ let quickSortCol = 'hostname';
 let quickSortDir = 1;
 let quickRenderTimer = null;
 let alertSettingsCache = null;
+let genericTableObserver = null;
 
 async function apiJSON(url, opts) {
   const resp = await fetch(url, { cache: 'no-store', ...(opts || {}) });
@@ -1356,6 +1357,78 @@ function debounce(fn, wait=250) {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), wait);
   };
+}
+
+
+function inferCellSortValue(cell) {
+  const raw = (cell?.dataset?.sortValue || cell?.textContent || '').trim();
+  if (!raw) return { type: 'text', value: '' };
+  const normalizedNum = raw.replace(/,/g, '');
+  if (/^-?\d+(\.\d+)?$/.test(normalizedNum)) {
+    return { type: 'number', value: Number(normalizedNum) };
+  }
+  const dateValue = Date.parse(raw);
+  if (!Number.isNaN(dateValue) && /\d/.test(raw)) {
+    return { type: 'date', value: dateValue };
+  }
+  return { type: 'text', value: raw.toLowerCase() };
+}
+
+function sortGenericResultTable(table, colIdx) {
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr')).filter(tr => tr.children.length > 1);
+  if (!rows.length) return;
+
+  const prevIdx = Number(table.dataset.sortIdx || -1);
+  const prevDir = Number(table.dataset.sortDir || 1);
+  const dir = prevIdx === colIdx ? prevDir * -1 : 1;
+  table.dataset.sortIdx = String(colIdx);
+  table.dataset.sortDir = String(dir);
+
+  const headers = Array.from(table.querySelectorAll('thead th'));
+  headers.forEach((th, idx) => {
+    th.classList.remove('sorted');
+    const icon = th.querySelector('.sort-icon');
+    if (icon) icon.textContent = idx === colIdx ? (dir > 0 ? '↑' : '↓') : '↕';
+  });
+  if (headers[colIdx]) headers[colIdx].classList.add('sorted');
+
+  rows.sort((a, b) => {
+    const av = inferCellSortValue(a.cells[colIdx]);
+    const bv = inferCellSortValue(b.cells[colIdx]);
+    if (av.type === bv.type && av.type !== 'text') return (av.value - bv.value) * dir;
+    return String(av.value).localeCompare(String(bv.value), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function enhanceGenericSortableTables(root = document) {
+  root.querySelectorAll('.table-wrap table').forEach(table => {
+    if (table.dataset.sortEnhanced === '1') return;
+    const headers = Array.from(table.querySelectorAll('thead th'));
+    const tbody = table.querySelector('tbody');
+    if (!headers.length || !tbody) return;
+    if (headers.some(th => th.getAttribute('onclick'))) return;
+
+    headers.forEach((th, idx) => {
+      th.style.cursor = 'pointer';
+      if (!th.querySelector('.sort-icon')) {
+        th.insertAdjacentHTML('beforeend', ' <span class="sort-icon">↕</span>');
+      }
+      th.addEventListener('click', () => sortGenericResultTable(table, idx));
+    });
+    table.dataset.sortEnhanced = '1';
+  });
+}
+
+function initGenericTableSorting() {
+  enhanceGenericSortableTables();
+  if (genericTableObserver) return;
+  const debouncedEnhance = debounce(() => enhanceGenericSortableTables(), 80);
+  genericTableObserver = new MutationObserver(() => debouncedEnhance());
+  genericTableObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2717,6 +2790,7 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════
+initGenericTableSorting();
 loadDash();
 hydrateTopProjectSelect();
 document.getElementById('alerts-search')?.addEventListener('input', debounce(() => {
