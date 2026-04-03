@@ -26,6 +26,38 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _build_alert_from_result(r: Dict, expiring_threshold: int):
+    """
+    Build an alert tuple from a scan result.
+    Returns: (hostname, issue_type, details, mismatch_scope) or None.
+
+    Mirrors original scanner behavior by suppressing noisy/expected
+    connection failures (is_ignored_error).
+    """
+    hostname = r.get("hostname", "")
+    days_left = r.get("days_left")
+    is_expiring_by_setting = isinstance(days_left, int) and 0 <= days_left <= expiring_threshold
+
+    # Keep derived flags aligned with the configured expiring threshold.
+    if is_expiring_by_setting:
+        r["is_expiring_soon"] = True
+    elif r.get("is_expiring_soon") and isinstance(days_left, int) and days_left > expiring_threshold:
+        r["is_expiring_soon"] = False
+    if r.get("is_ok") and isinstance(days_left, int) and days_left <= expiring_threshold:
+        r["is_ok"] = False
+
+    if r.get("is_mismatch") and not r.get("error"):
+        mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
+        return (hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname", mismatch_scope)
+    if r.get("is_expired") and not r.get("error"):
+        return (hostname, "Expired", f"Expired {r.get('expiry','?')}", "")
+    if is_expiring_by_setting and not r.get("error"):
+        return (hostname, "Expiring Soon", f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)", "")
+    if r.get("error") and not r.get("is_ignored_error"):
+        return (hostname, "Scan Error", r.get("error") or "Unknown TLS error", "")
+    return None
+
+
 def get_scan_state(sid: str) -> Optional[Dict]:
     with _scan_lock:
         return _scan_state.get(sid)
@@ -107,28 +139,7 @@ def run_project_scan(project_id: str, triggered_by: str = "manual") -> Optional[
     lock = threading.Lock()
 
     def on_result(done, total_inner, r):
-        hostname = r.get("hostname", "")
-        alert = None
-        days_left = r.get("days_left")
-        is_expiring_by_setting = isinstance(days_left, int) and 0 <= days_left <= expiring_threshold
-        if is_expiring_by_setting:
-            r["is_expiring_soon"] = True
-        elif r.get("is_expiring_soon") and isinstance(days_left, int) and days_left > expiring_threshold:
-            r["is_expiring_soon"] = False
-        if r.get("is_ok") and is_expiring_by_setting:
-            r["is_ok"] = False
-        elif r.get("is_ok") and isinstance(days_left, int) and days_left <= expiring_threshold:
-            r["is_ok"] = False
-
-        if r.get("is_mismatch") and not r.get("error"):
-            mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
-            alert = (hostname, "SSL Mismatch", f"CN '{r.get('cn','?')}' ≠ hostname", mismatch_scope)
-        elif r.get("is_expired") and not r.get("error"):
-            alert = (hostname, "Expired", f"Expired {r.get('expiry','?')}", "")
-        elif is_expiring_by_setting and not r.get("error"):
-            alert = (hostname, "Expiring Soon", f"Expires {r.get('expiry','?')} ({r.get('days_left')}d)", "")
-        elif r.get("error"):
-            alert = (hostname, "Scan Error", r.get("error") or "Unknown TLS error", "")
+        alert = _build_alert_from_result(r, expiring_threshold)
         with lock:
             if alert:
                 alert_batch.append(alert)
