@@ -776,7 +776,10 @@ def subfinder_raw_results_list(pid, limit=20, preview_chars=4000):
         if preview_chars and len(out_text) > preview_chars:
             out_text = out_text[:preview_chars] + "\n…truncated for UI performance…"
         d["raw_preview"] = out_text
-        d["raw_lines"] = [ln for ln in out_text.splitlines() if ln.strip()][:250]
+        raw_lines = [ln for ln in out_text.splitlines() if ln.strip()]
+        if preview_chars:
+            raw_lines = raw_lines[:250]
+        d["raw_lines"] = raw_lines
         d["stderr_preview"] = err_text[:preview_chars] if preview_chars else err_text
         d.pop("stdout_z", None)
         d.pop("stderr_z", None)

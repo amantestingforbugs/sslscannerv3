@@ -2593,7 +2593,7 @@ async function refreshSfPanel() {
 
     // Raw results table
     document.getElementById('sf-raw-body').innerHTML = (rawRuns||[]).length ? (rawRuns||[]).map(rr => {
-      const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_text || '—');
+      const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_preview || rr.stderr_text || '—');
       return `<tr>
         <td style="font-family:var(--mono);font-size:12px">${esc(rr.root_domain)}</td>
         <td style="font-size:12px;color:var(--text-secondary)">${new Date(rr.started_at).toLocaleString()}</td>
@@ -2694,9 +2694,9 @@ async function loadSfRawPage() {
     body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:18px;color:var(--text-muted)">Select a project.</td></tr>';
     return;
   }
-  const { data: rawRuns } = await fetch(`/api/projects/${pid}/subfinder/raw-results?limit=100`).then(r=>r.json());
+  const { data: rawRuns } = await fetch(`/api/projects/${pid}/subfinder/raw-results?limit=100&preview_chars=0`).then(r=>r.json());
   body.innerHTML = (rawRuns||[]).length ? (rawRuns||[]).map(rr => {
-    const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_text || '—');
+    const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_preview || rr.stderr_text || '—');
     return `<tr>
       <td style="font-family:var(--mono);font-size:12px">${esc(rr.root_domain)}</td>
       <td style="font-size:12px;color:var(--text-secondary)">${new Date(rr.started_at).toLocaleString()}</td>
