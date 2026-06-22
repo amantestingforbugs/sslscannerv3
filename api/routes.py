@@ -12,7 +12,6 @@ import queue
 import threading
 import time
 import logging
-import subprocess
 from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 
@@ -35,9 +34,6 @@ api = Blueprint("api", __name__, url_prefix="/api")
 # Each connected browser gets its own queue. Events pushed here reach all clients.
 _sse_clients: list[queue.Queue] = []
 _sse_lock = threading.Lock()
-_openssl_threads: dict[str, threading.Thread] = {}
-_openssl_status: dict[str, dict] = {}
-_openssl_lock = threading.Lock()
 _quick_scan_threads: dict[str, threading.Thread] = {}
 _quick_scan_state: dict[str, dict] = {}
 _quick_scan_lock = threading.Lock()
@@ -95,39 +91,15 @@ def _normalize_hostname(raw: str) -> str:
     return v.strip(".")
 
 
-def _run_openssl_subject(hostname: str, timeout: int = 20) -> dict:
-    cmd = ["openssl", "s_client", "-connect", f"{hostname}:443"]
-    try:
-        run = subprocess.run(
-            cmd,
-            input="",
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-        )
-        lines = [ln.strip() for ln in (run.stdout or "").splitlines() if "subject" in ln.lower()]
-        subject = lines[0] if lines else ""
-        return {
-            "hostname": hostname,
-            "subject": subject or "subject not found",
-            "status": "ok" if subject else "no_subject",
-            "exit_code": run.returncode,
-        }
-    except subprocess.TimeoutExpired:
-        return {"hostname": hostname, "subject": "", "status": "timeout", "error": f"timeout after {timeout}s"}
-    except FileNotFoundError:
-        return {"hostname": hostname, "subject": "", "status": "error", "error": "openssl binary not found"}
-    except Exception as e:
-        return {"hostname": hostname, "subject": "", "status": "error", "error": str(e)}
 
-
-def _collect_openssl_hosts(pid: str) -> list[str]:
-    base_hosts = {_normalize_hostname(h) for h in db.project_hosts(pid)}
-    sf_hosts = {
-        _normalize_hostname(r["hostname"])
-        for r in db.x("SELECT hostname FROM subfinder_hosts WHERE project_id=?", (pid,)).fetchall()
-    }
-    return sorted({h for h in (base_hosts | sf_hosts) if h})
+def _normalize_domain(raw: str) -> str:
+    host = _normalize_hostname(raw)
+    if not host or "." not in host:
+        return ""
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
+    if any(ch not in allowed for ch in host) or ".." in host:
+        return ""
+    return host
 
 
 def _start_quick_scan(hosts: list[str]) -> str:
@@ -253,68 +225,6 @@ def _quick_scan_worker(sid: str):
                 }
         broadcast("quick_scan_update", payload)
 
-
-def _start_openssl_worker(pid: str, source: str = "manual") -> bool:
-    with _openssl_lock:
-        existing = _openssl_threads.get(pid)
-        if existing and existing.is_alive():
-            return False
-        _openssl_status[pid] = {
-            "status": "running",
-            "source": source,
-            "started_at": time.time(),
-            "last_tick": time.time(),
-            "processed_total": 0,
-            "new_hosts_scanned": 0,
-        }
-        th = threading.Thread(target=_openssl_worker_loop, args=(pid, source), daemon=True, name=f"openssl-{pid[:8]}")
-        _openssl_threads[pid] = th
-        th.start()
-        return True
-
-
-def _openssl_worker_loop(pid: str, source: str):
-    try:
-        while True:
-            if not db.project_get(pid):
-                break
-            known = {r["hostname"] for r in db.openssl_results_list(pid, limit=5000)}
-            hosts = _collect_openssl_hosts(pid)
-            pending = [h for h in hosts if h not in known]
-
-            with _openssl_lock:
-                if pid in _openssl_status:
-                    _openssl_status[pid]["last_tick"] = time.time()
-
-            if not pending:
-                broadcast("openssl_status", {"project_id": pid, "status": "idle_waiting", "tracked_hosts": len(hosts)})
-                time.sleep(10)
-                continue
-
-            rows = []
-            for hostname in pending:
-                row = _run_openssl_subject(hostname)
-                rows.append(row)
-                db.openssl_results_upsert_batch(pid, [row], source=source)
-                with _openssl_lock:
-                    if pid in _openssl_status:
-                        _openssl_status[pid]["processed_total"] += 1
-                        _openssl_status[pid]["new_hosts_scanned"] += 1
-                broadcast("openssl_row", {"project_id": pid, "row": row})
-
-            broadcast("openssl_status", {
-                "project_id": pid,
-                "status": "running",
-                "processed": len(rows),
-                "pending_after": 0,
-                "tracked_hosts": len(hosts),
-            })
-            time.sleep(2)
-    finally:
-        with _openssl_lock:
-            if pid in _openssl_status:
-                _openssl_status[pid]["status"] = "stopped"
-        broadcast("openssl_status", {"project_id": pid, "status": "stopped"})
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────
@@ -679,69 +589,21 @@ def toggle_subfinder(pid):
     return ok({"subfinder_enabled": new_val})
 
 
-@api.post("/projects/<pid>/openssl")
-def openssl_subjects(pid):
-    p = db.project_get(pid)
-    if not p:
-        return err("Project not found", 404)
-
-    # Run a fresh subfinder pass first so newly discovered subdomains are included.
-    subfinder_job_id = None
-    subfinder_error = ""
+@api.post("/tools/subdomains")
+def enumerate_subdomains_tool():
+    d = request.json or {}
+    domain = _normalize_domain(d.get("domain", ""))
+    if not domain:
+        return err("Enter a valid domain, for example example.com")
     try:
-        from subfinder.runner import run_subfinder_for_project
-        subfinder_job_id = run_subfinder_for_project(pid, triggered_by="manual:openssl")
+        from subfinder.runner import enumerate_subdomains_for_domain, subfinder_available
+        result = enumerate_subdomains_for_domain(domain)
     except Exception as e:
-        subfinder_error = str(e)
-
-    hosts = _collect_openssl_hosts(pid)
-    if not hosts:
-        return err("No hosts found. Upload project hosts first.", 400)
-
-    rows = [_run_openssl_subject(h) for h in hosts]
-    db.openssl_results_upsert_batch(pid, rows, source="manual")
+        return err(f"Subdomain enumeration failed: {e}", 500)
     return ok({
-        "project_id": pid,
-        "project_name": p["name"],
-        "hosts_total": len(hosts),
-        "subfinder_job_id": subfinder_job_id,
-        "subfinder_error": subfinder_error,
-        "command_template": "openssl s_client -connect HOSTNAME:443 </dev/null 2>/dev/null | grep subject",
-        "rows": rows,
-    })
-
-
-@api.get("/projects/<pid>/openssl")
-def openssl_subjects_list(pid):
-    p = db.project_get(pid)
-    if not p:
-        return err("Project not found", 404)
-    limit = min(5000, max(50, int(request.args.get("limit", 2000))))
-    search = (request.args.get("search", "") or "").strip()
-    rows = db.openssl_results_list(pid, search=search, limit=limit)
-    with _openssl_lock:
-        status = dict(_openssl_status.get(pid) or {"status": "idle"})
-    return ok({
-        "project_id": pid,
-        "project_name": p["name"],
-        "rows": rows,
-        "rows_total": len(rows),
-        "tracked_hosts": len(_collect_openssl_hosts(pid)),
-        "worker": status,
-    })
-
-
-@api.post("/projects/<pid>/openssl/start")
-def openssl_subjects_start(pid):
-    p = db.project_get(pid)
-    if not p:
-        return err("Project not found", 404)
-    started = _start_openssl_worker(pid, source="continuous")
-    return ok({
-        "project_id": pid,
-        "project_name": p["name"],
-        "started": started,
-        "message": "OpenSSL continuous scan started" if started else "OpenSSL continuous scan already running",
+        "domain": domain,
+        "binary_available": subfinder_available(),
+        **result,
     })
 
 

@@ -226,6 +226,23 @@ def _is_host_within_root(host: str, root_domain: str) -> bool:
     return host.endswith(f".{root_domain}")
 
 
+def enumerate_subdomains_for_domain(domain: str, timeout: int = 180) -> Dict[str, object]:
+    """Enumerate subdomains for a single user-supplied domain."""
+    normalized = _normalize_host(domain)
+    if not normalized or not _HOST_RE.match(normalized):
+        raise ValueError("valid domain is required")
+    run = _run_subfinder_for_root(normalized, timeout=timeout)
+    return {
+        "root_domain": normalized,
+        "command": run.get("command", ""),
+        "status": run.get("status", "error"),
+        "exit_code": run.get("exit_code"),
+        "stderr": run.get("stderr", ""),
+        "total_found": len(run.get("found") or []),
+        "subdomains": run.get("found") or [],
+    }
+
+
 def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") -> Optional[str]:
     """
     Full subfinder pipeline for a project:
