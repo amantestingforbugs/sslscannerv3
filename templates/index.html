@@ -88,71 +88,84 @@ button{cursor:pointer;font-family:inherit}
 
 /* ── SIDEBAR ── */
 .sidebar{
-  width:var(--sidebar-w);min-width:var(--sidebar-w);
-  background:var(--bg-surface);
-  border-right:1px solid var(--border);
+  width:280px;min-width:280px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(79,70,229,.32), transparent 34%),
+    radial-gradient(circle at 90% 18%, rgba(167,139,250,.22), transparent 30%),
+    linear-gradient(180deg, rgba(21,25,34,.98), rgba(12,16,25,.98));
+  border-right:1px solid rgba(148,163,184,.16);
   display:flex;flex-direction:column;
-  transition:background var(--transition);
-  z-index:100;
+  transition:width var(--transition),min-width var(--transition),background var(--transition);
+  z-index:100;position:relative;overflow:hidden;
+  box-shadow:18px 0 48px rgba(0,0,0,.24);
 }
+[data-theme="light"] .sidebar{
+  background:
+    radial-gradient(circle at 15% 0%, rgba(79,70,229,.16), transparent 38%),
+    radial-gradient(circle at 100% 16%, rgba(124,58,237,.10), transparent 32%),
+    linear-gradient(180deg,#ffffff,#f8fafc 64%,#eef2ff);
+  box-shadow:18px 0 44px rgba(15,23,42,.08);
+}
+.sidebar::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.06),transparent 38%);pointer-events:none}
+.sidebar::after{content:'';position:absolute;right:0;top:0;bottom:0;width:1px;background:linear-gradient(180deg,transparent,var(--accent),transparent);opacity:.45}
 
 .sidebar-logo{
-  padding:20px 18px 16px;
-  border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:10px;
+  padding:22px 18px 14px;
+  display:flex;align-items:center;gap:12px;position:relative;z-index:1;
 }
-
 .logo-mark{
-  width:32px;height:32px;border-radius:8px;
-  background:linear-gradient(135deg,#4f7cff,#a78bfa);
+  width:42px;height:42px;border-radius:14px;
+  background:linear-gradient(135deg,#4f46e5,#7c3aed 54%,#06b6d4);
   display:flex;align-items:center;justify-content:center;
-  font-size:14px;font-weight:700;color:#fff;flex-shrink:0;
+  font-size:18px;font-weight:800;color:#fff;flex-shrink:0;
+  box-shadow:0 12px 28px rgba(79,70,229,.36), inset 0 1px 0 rgba(255,255,255,.35);
+  position:relative;
 }
+.logo-mark::after{content:'';position:absolute;inset:8px;border:1px solid rgba(255,255,255,.38);border-radius:9px}
+.logo-text{font-weight:800;font-size:15px;color:var(--text-primary);letter-spacing:-.03em;line-height:1.1}
+.logo-sub{font-size:11px;color:var(--text-muted);margin-top:3px;font-weight:600;letter-spacing:.01em}
+.sidebar-status-card{
+  margin:0 14px 12px;padding:14px;border:1px solid rgba(148,163,184,.18);
+  border-radius:18px;background:rgba(255,255,255,.055);backdrop-filter:blur(16px);
+  position:relative;z-index:1;box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+[data-theme="light"] .sidebar-status-card{background:rgba(255,255,255,.72);box-shadow:0 12px 30px rgba(79,70,229,.08)}
+.status-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.status-kicker{font-size:10px;color:var(--text-muted);font-weight:800;text-transform:uppercase;letter-spacing:.12em}
+.status-label{font-size:13px;font-weight:750;color:var(--text-primary);margin-top:2px}
+.status-bubble{width:34px;height:34px;border-radius:12px;background:var(--green-dim);color:var(--green);display:flex;align-items:center;justify-content:center;font-weight:800}
+.status-meter{height:7px;border-radius:999px;background:rgba(148,163,184,.18);overflow:hidden}
+.status-meter span{display:block;height:100%;width:76%;border-radius:inherit;background:linear-gradient(90deg,var(--green),#22d3ee,var(--accent))}
+.status-card-bottom{display:flex;justify-content:space-between;margin-top:9px;font-size:11px;color:var(--text-muted);font-weight:600}
 
-.logo-text{font-weight:700;font-size:14px;color:var(--text-primary);letter-spacing:-.01em}
-.logo-sub{font-size:10px;color:var(--text-muted);margin-top:1px}
-
-.nav{flex:1;padding:12px 8px;overflow-y:auto}
-.nav-section{padding:6px 10px 4px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-top:8px}
-.nav-section:first-child{margin-top:0}
-
+.nav{flex:1;padding:4px 12px 12px;overflow-y:auto;position:relative;z-index:1}
+.nav-group{margin-top:12px}
+.nav-section{padding:0 10px 7px;font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.12em;margin-top:0;display:flex;align-items:center;gap:8px}
+.nav-section::after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(148,163,184,.20),transparent)}
 .nav-item{
-  display:flex;align-items:center;gap:9px;
-  padding:8px 10px;border-radius:var(--radius-sm);
-  color:var(--text-secondary);font-size:13px;font-weight:500;
-  cursor:pointer;transition:all var(--transition);
-  border:none;background:none;width:100%;text-align:left;
+  display:flex;align-items:center;gap:11px;position:relative;
+  padding:10px 11px;border-radius:14px;margin:2px 0;
+  color:var(--text-secondary);font-size:13px;font-weight:650;
+  cursor:pointer;transition:transform var(--transition),background var(--transition),color var(--transition),box-shadow var(--transition);
+  border:1px solid transparent;background:transparent;width:100%;text-align:left;
 }
-.nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
-.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:600}
-.nav-item svg{width:16px;height:16px;flex-shrink:0;opacity:.8}
+.nav-item:hover{background:rgba(148,163,184,.10);color:var(--text-primary);transform:translateX(2px)}
+.nav-item.active{
+  background:linear-gradient(135deg,rgba(79,70,229,.96),rgba(124,58,237,.90));
+  color:#fff;font-weight:750;border-color:rgba(255,255,255,.18);
+  box-shadow:0 12px 26px rgba(79,70,229,.28), inset 0 1px 0 rgba(255,255,255,.22);
+}
+.nav-item.active::before{content:'';position:absolute;left:-7px;top:13px;bottom:13px;width:4px;border-radius:999px;background:#fff;box-shadow:0 0 18px rgba(255,255,255,.8)}
+.nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.86;filter:drop-shadow(0 1px 0 rgba(0,0,0,.08))}
+.nav-item span:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-item.active svg{opacity:1}
-.nav-badge{
-  margin-left:auto;background:var(--red);color:#fff;
-  font-size:10px;font-weight:700;padding:2px 6px;
-  border-radius:10px;min-width:18px;text-align:center;
-}
-
-.sidebar-footer{
-  padding:12px 16px;border-top:1px solid var(--border);
-  display:flex;flex-direction:column;gap:6px;
-}
-
-.scheduler-pill{
-  display:flex;align-items:center;gap:7px;
-  font-size:11px;color:var(--text-secondary);
-}
-
-.pulse{
-  width:7px;height:7px;border-radius:50%;
-  background:var(--green);flex-shrink:0;
-  box-shadow:0 0 0 0 rgba(52,211,153,.5);
-  animation:pulse-ring 2s infinite;
-}
-@keyframes pulse-ring{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}70%{box-shadow:0 0 0 6px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
-
-.sidebar-clock{font-size:10px;color:var(--text-muted);font-family:var(--mono)}
-
+.nav-badge{margin-left:auto;background:linear-gradient(135deg,#ef4444,#fb7185);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;min-width:20px;text-align:center;box-shadow:0 6px 16px rgba(239,68,68,.25)}
+.sidebar-footer{margin:0 14px 14px;padding:13px 14px;border:1px solid rgba(148,163,184,.16);border-radius:16px;background:rgba(255,255,255,.045);display:flex;flex-direction:column;gap:8px;position:relative;z-index:1}
+[data-theme="light"] .sidebar-footer{background:rgba(255,255,255,.68)}
+.scheduler-pill{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);font-weight:700}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 0 0 rgba(52,211,153,.5);animation:pulse-ring 2s infinite}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+.sidebar-clock{font-size:11px;color:var(--text-muted);font-family:var(--mono)}
 /* ── MAIN ── */
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 
@@ -535,10 +548,16 @@ tbody tr:last-child td{border-bottom:none}
 ════════════════════════════════════════════════════════════ */
 @media(max-width:900px){
   .stats-row{grid-template-columns:repeat(2,1fr)}
-  .sidebar{width:64px;min-width:64px}
-  .logo-text,.logo-sub,.nav-section,.nav-item span,.scheduler-pill span,.sidebar-clock{display:none}
-  .nav-item{justify-content:center;padding:10px}
+  .sidebar{width:72px;min-width:72px}
+  .sidebar-logo{justify-content:center;padding:18px 10px 12px}
+  .logo-text,.logo-sub,.nav-section,.nav-item span,.scheduler-pill span,.sidebar-clock,.sidebar-status-card{display:none}
+  .nav{padding:8px}
+  .nav-group{margin-top:8px}
+  .nav-item{justify-content:center;padding:11px;margin-bottom:5px}
+  .nav-item:hover{transform:none}
+  .nav-item.active::before{left:-5px;top:12px;bottom:12px}
   .nav-item svg{width:20px;height:20px;opacity:1}
+  .sidebar-footer{margin:8px;padding:12px;align-items:center}
 }
 @media(max-width:600px){
   .stats-row{grid-template-columns:1fr 1fr}
@@ -595,7 +614,21 @@ tbody tr:last-child td{border-bottom:none}
     </div>
   </div>
 
+  <div class="sidebar-status-card" aria-label="Monitoring health summary">
+    <div class="status-card-top">
+      <div>
+        <div class="status-kicker">Security posture</div>
+        <div class="status-label">Live certificate watch</div>
+      </div>
+      <div class="status-bubble">76</div>
+    </div>
+    <div class="status-meter"><span></span></div>
+    <div class="status-card-bottom"><span>Healthy</span><span>Auto-refresh</span></div>
+  </div>
+
   <nav class="nav">
+    <div class="nav-group">
+      <div class="nav-section">Overview</div>
     <button class="nav-item active" data-page="dashboard">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>Dashboard</span>
@@ -609,6 +642,9 @@ tbody tr:last-child td{border-bottom:none}
       <span>Alerts</span>
       <span class="nav-badge" id="navAlertBadge" style="display:none">0</span>
     </button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-section">Discovery</div>
     <button class="nav-item" data-page="subfinder">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
       <span>Subfinder</span>
@@ -625,6 +661,9 @@ tbody tr:last-child td{border-bottom:none}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
       <span>Subfinder Raw Results</span>
     </button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-section">Tools</div>
     <button class="nav-item" data-page="openssl">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M5 7h14"/><path d="M5 17h14"/><circle cx="12" cy="12" r="3"/></svg>
       <span>OpenSSL</span>
@@ -633,10 +672,14 @@ tbody tr:last-child td{border-bottom:none}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
       <span>Logs</span>
     </button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-section">System</div>
     <button class="nav-item" data-page="settings">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.33 1V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-.33-1A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 3.3 17l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1-.33H2a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1-.33A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82L3.2 6.1A2 2 0 1 1 6 3.3l.06.06A1.65 1.65 0 0 0 8 3.6a1.65 1.65 0 0 0 1-.6 1.65 1.65 0 0 0 .33-1V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 .33 1 1.65 1.65 0 0 0 1 .6 1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 1 1 20.7 6l-.06.06A1.65 1.65 0 0 0 20.4 8c0 .39.14.76.4 1 .26.24.61.37 1 .37H22a2 2 0 1 1 0 4h-.09c-.39 0-.76.14-1 .4-.24.26-.37.61-.37 1z"/></svg>
       <span>Settings</span>
     </button>
+    </div>
   </nav>
 
   <div class="sidebar-footer">
