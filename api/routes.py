@@ -722,6 +722,50 @@ def enumerate_subdomains_tool():
     return ok({"scan_id": sid, "domain": domain, "scan_type": scan_type, "status": "queued", "binary_available": subfinder_available()})
 
 
+@api.post("/tools/subdomains/merge")
+def merge_subdomain_tool_results():
+    d = request.json or {}
+    domain = _normalize_domain(d.get("domain", ""))
+    if not domain:
+        return err("Enter a valid domain to merge results for, for example example.com")
+    subfinder_scan = db.subdomain_tool_scan_latest_for_domain(domain, "subfinder")
+    passive_scan = db.subdomain_tool_scan_latest_for_domain(domain, "passive")
+    if not subfinder_scan or not passive_scan:
+        missing = []
+        if not subfinder_scan:
+            missing.append("Subfinder")
+        if not passive_scan:
+            missing.append("Passive Sources")
+        return err(f"Run a completed {' and '.join(missing)} scan for {domain} before merging", 409)
+
+    merged_hosts = sorted(set(subfinder_scan.get("subdomains") or []) | set(passive_scan.get("subdomains") or []))
+    sid = db.uid()
+    db.subdomain_tool_scan_create(sid, domain, scan_type="merged")
+    finished_at = db.now()
+    command = (
+        f"Merged deduplicated results from Subfinder scan {subfinder_scan.get('id')} "
+        f"and Passive scan {passive_scan.get('id')}"
+    )
+    db.subdomain_tool_scan_update(
+        sid,
+        status="done",
+        command=command,
+        total_found=len(merged_hosts),
+        subdomains=merged_hosts,
+        exit_code=0,
+        finished_at=finished_at,
+    )
+    with _subdomain_tool_lock:
+        _subdomain_tool_state[sid] = db.subdomain_tool_scan_get(sid)
+    payload = _subdomain_tool_public_state(sid)
+    payload["merged_from"] = {
+        "subfinder": subfinder_scan.get("id"),
+        "passive": passive_scan.get("id"),
+    }
+    broadcast("subdomain_tool_update", payload)
+    return ok(payload)
+
+
 @api.get("/tools/subdomains/latest")
 def subdomain_tool_latest():
     state = db.subdomain_tool_scan_latest()

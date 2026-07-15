@@ -745,7 +745,7 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
 
 def subdomain_tool_scan_create(sid, domain, scan_type="subfinder"):
     n = now()
-    scan_type = scan_type if scan_type in {"subfinder", "passive"} else "subfinder"
+    scan_type = scan_type if scan_type in {"subfinder", "passive", "merged"} else "subfinder"
     x(
         "INSERT INTO subdomain_tool_scans(id,domain,status,total_found,scan_type,subdomains,started_at,updated_at) "
         "VALUES(?,?,?,?,?,?,?,?)",
@@ -786,6 +786,15 @@ def subdomain_tool_scan_get(sid):
 def subdomain_tool_scan_latest():
     return _subdomain_tool_scan_row_to_dict(
         x("SELECT * FROM subdomain_tool_scans ORDER BY started_at DESC LIMIT 1").fetchone()
+    )
+
+
+def subdomain_tool_scan_latest_for_domain(domain, scan_type):
+    return _subdomain_tool_scan_row_to_dict(
+        x(
+            "SELECT * FROM subdomain_tool_scans WHERE domain=? AND scan_type=? AND status='done' ORDER BY finished_at DESC, started_at DESC LIMIT 1",
+            (domain, scan_type),
+        ).fetchone()
     )
 
 

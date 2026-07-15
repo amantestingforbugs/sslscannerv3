@@ -1386,6 +1386,7 @@ tbody tr:last-child td{border-bottom:none}
         </div>
         <button class="btn btn-primary" style="height:36px" id="subdomain-tool-btn" onclick="runSubdomainEnumeration('subfinder')">🔍 Subfinder</button>
         <button class="btn" style="height:36px" id="subdomain-tool-passive-btn" onclick="runSubdomainEnumeration('passive')">🌐 Passive Sources</button>
+        <button class="btn" style="height:36px" id="subdomain-tool-merge-btn" onclick="mergeSubdomainEnumerationResults()">🔗 Merge Results</button>
       </div>
       <div class="card" id="subdomain-tool-progress" style="display:none;margin-bottom:14px">
         <div class="card-body">
@@ -1417,7 +1418,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="card" id="subdomain-tool-results-card">
           <div class="card-body" style="padding-bottom:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain, then run Subfinder or a separate passive-source scan.</div>
+              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain, run Subfinder and Passive Sources, then merge both deduplicated results.</div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
                 <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
@@ -2592,7 +2593,7 @@ function renderSubdomainToolHistory(scans=[]) {
     const timestamp = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
     return `<button class="subdomain-scan-card${selected}" onclick="openSubdomainToolScan('${scan.id || scan.scan_id}')">
       <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${badgeClass}">${esc(scan.status || 'queued')}</span></div>
-      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(scan.scan_type === 'passive' ? 'Passive' : 'Subfinder')}</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
+      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(scan.scan_type === 'passive' ? 'Passive' : (scan.scan_type === 'merged' ? 'Merged' : 'Subfinder'))}</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
     </button>`;
   }).join('');
 }
@@ -2657,7 +2658,7 @@ function changeSubdomainToolPage(delta) {
   renderSubdomainToolRows(subdomainToolRows);
 }
 
-function subdomainToolLabel(scanType) { return scanType === 'passive' ? 'Passive sources' : 'Subfinder'; }
+function subdomainToolLabel(scanType) { return scanType === 'passive' ? 'Passive sources' : (scanType === 'merged' ? 'Merged results' : 'Subfinder'); }
 
 function updateSubdomainToolProgress(state={}) {
   subdomainToolStatus = state.status || subdomainToolStatus || 'idle';
@@ -2675,7 +2676,8 @@ function updateSubdomainToolProgress(state={}) {
   stopBtn.disabled = !active || subdomainToolStatus === 'stopping';
   document.getElementById('subdomain-tool-btn').disabled = false;
   document.getElementById('subdomain-tool-passive-btn').disabled = false;
-  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Scan: ${subdomainToolLabel(state.scan_type)} · Status: ${subdomainToolStatus}` : 'Enter a domain, then run Subfinder or a separate passive-source scan.');
+  document.getElementById('subdomain-tool-merge-btn').disabled = active;
+  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Scan: ${subdomainToolLabel(state.scan_type)} · Status: ${subdomainToolStatus}` : 'Enter a domain, run Subfinder and Passive Sources, then merge both deduplicated results.');
 }
 
 async function initSubdomainToolPage() {
@@ -2741,6 +2743,28 @@ async function runSubdomainEnumeration(scanType='subfinder') {
   } catch (e) {
     updateSubdomainToolProgress({status:'error', error:e.message});
     toast(e.message || 'Subdomain enumeration failed', 'err');
+  }
+}
+
+async function mergeSubdomainEnumerationResults() {
+  const input = document.getElementById('subdomain-tool-domain');
+  const domain = (input.value || '').trim();
+  if (!domain) { toast('Enter a domain to merge', 'err'); return; }
+  if (subdomainToolPollTimer) clearInterval(subdomainToolPollTimer);
+  try {
+    const { data } = await apiJSON('/api/tools/subdomains/merge', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }),
+    });
+    subdomainToolScanId = data.id || data.scan_id;
+    subdomainToolRows = data.subdomains || [];
+    subdomainToolPage = 1;
+    upsertSubdomainToolHistory(data);
+    renderSubdomainToolRows(subdomainToolRows);
+    updateSubdomainToolProgress(data);
+    loadSubdomainToolHistory();
+    toast(`Merged ${fmt(subdomainToolRows.length)} deduplicated subdomains`, 'ok');
+  } catch (e) {
+    toast(e.message || 'Unable to merge Subfinder and passive results', 'err');
   }
 }
 
