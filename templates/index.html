@@ -233,7 +233,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .app.sidebar-hidden .sidebar-footer{margin:8px;padding:12px;align-items:center}
 
 /* ── CONTENT ── */
-.content{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth;position:relative;z-index:1;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;content-visibility:auto;contain-intrinsic-size:900px}
+.content{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth;position:relative;z-index:1;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;min-height:0;padding-bottom:48px}
 
 /* ════════════════════════════════════════════════════════════
    PAGES
@@ -597,6 +597,11 @@ tbody tr:last-child td{border-bottom:none}
   border-radius:var(--radius-sm);padding:14px;margin-top:10px;
   font-family:var(--mono);font-size:12px;color:var(--text-secondary);line-height:1.8;
 }
+
+/* Keep long Subfinder result pages in the main content scroll flow.
+   content-visibility on these dynamic tables can make Chromium lose the
+   scroll range while rows/cards are being revealed or refreshed. */
+#page-subfinder,#page-subfinder *,#page-subdomain-tool,#page-subdomain-tool *{content-visibility:visible!important;contain-intrinsic-size:auto!important}
 
 .subdomain-tool-layout{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:14px;align-items:start}
 .subdomain-scan-list{display:flex;flex-direction:column;gap:8px}
