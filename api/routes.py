@@ -716,6 +716,15 @@ def subdomain_tool_latest():
     return ok(state)
 
 
+@api.get("/tools/subdomains")
+def subdomain_tool_history():
+    try:
+        limit = int(request.args.get("limit", 20))
+    except ValueError:
+        limit = 20
+    return ok(db.subdomain_tool_scans_list(limit=limit))
+
+
 @api.get("/tools/subdomains/<sid>")
 def subdomain_tool_status(sid):
     state = _subdomain_tool_public_state(sid)

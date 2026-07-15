@@ -782,6 +782,15 @@ def subdomain_tool_scan_latest():
     )
 
 
+def subdomain_tool_scans_list(limit=20):
+    limit = max(1, min(100, int(limit or 20)))
+    rows = x(
+        "SELECT * FROM subdomain_tool_scans ORDER BY started_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_subdomain_tool_scan_row_to_dict(r) for r in rows]
+
+
 def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_at=None):
     rid = uid()
     x(
