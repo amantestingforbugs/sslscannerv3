@@ -709,7 +709,15 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
             h.hostname,
             h.first_seen,
             h.last_seen,
-            h.ssl_scanned
+            h.ssl_scanned,
+            (
+              SELECT n.discovered_at
+              FROM subfinder_new_discoveries n
+              WHERE n.project_id = h.project_id
+                AND n.hostname = h.hostname
+              ORDER BY n.discovered_at DESC
+              LIMIT 1
+            ) AS discovered_at
           FROM subfinder_hosts h
           {where}
           ORDER BY h.first_seen DESC
@@ -735,6 +743,7 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
           fh.hostname,
           fh.first_seen,
           fh.last_seen,
+          COALESCE(fh.discovered_at, fh.first_seen) AS discovered_at,
           fh.ssl_scanned,
           r.cn,
           r.issuer,

@@ -33,6 +33,8 @@ initial = db.subfinder_discoveries(pid, mode="initial_job")
 latest = db.subfinder_discoveries(pid, mode="latest_scheduled")
 assert [row["hostname"] for row in initial["rows"]] == ["first.example.com"]
 assert [row["hostname"] for row in latest["rows"]] == ["latest.example.com"]
+assert initial["rows"][0]["discovered_at"]
+assert latest["rows"][0]["discovered_at"]
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
