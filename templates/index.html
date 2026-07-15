@@ -342,7 +342,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 .form-input::placeholder{color:var(--text-muted)}
 select.form-input{
-  appearance:none;-webkit-appearance:none;cursor:pointer;min-height:40px;font-weight:650;color-scheme:dark;
+  appearance:none;-webkit-appearance:none;cursor:pointer;min-height:40px;font-weight:650;
   padding-right:42px;
   background-image:
     linear-gradient(45deg,transparent 50%,var(--accent) 50%),
@@ -365,7 +365,7 @@ select.form-input:focus{background-image:
 select.form-input:disabled{cursor:not-allowed;opacity:.55;transform:none;box-shadow:none}
 select.form-input option{background:var(--bg-surface);color:var(--text-primary);font-weight:600}
 select.form-input option:checked{background:linear-gradient(135deg,var(--accent),#06b6d4);color:#fff}
-[data-theme="light"] select.form-input{color-scheme:light;box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 10px 24px rgba(15,23,42,.06)}
+[data-theme="light"] select.form-input{box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 10px 24px rgba(15,23,42,.06)}
 textarea.form-input{min-height:100px;resize:vertical;line-height:1.6;font-family:var(--mono);font-size:12px}
 .form-row{display:flex;gap:12px;align-items:flex-end}
 .form-row .form-group{flex:1;margin-bottom:0}
@@ -780,8 +780,8 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
 .project-switcher-chevron{width:18px;height:18px;color:var(--text-muted);transition:transform var(--transition),color var(--transition);flex-shrink:0}
 .project-switcher.open .project-switcher-chevron{transform:rotate(180deg);color:var(--accent)}
 .project-switcher-menu{
-  position:fixed;right:auto;top:auto;width:min(360px,calc(100vw - 32px));max-height:min(360px,calc(100vh - 120px));overflow:auto;
-  margin-top:0;padding:8px;border:1px solid color-mix(in srgb,var(--border) 78%,transparent);border-radius:18px;
+  position:absolute;right:0;top:100%;width:min(360px,calc(100vw - 32px));max-height:min(360px,calc(100vh - 120px));overflow:auto;
+  margin-top:12px;padding:8px;border:1px solid color-mix(in srgb,var(--border) 78%,transparent);border-radius:18px;
   background:linear-gradient(180deg,color-mix(in srgb,var(--bg-surface) 98%,transparent),color-mix(in srgb,var(--bg-raised) 94%,transparent));
   backdrop-filter:blur(24px);box-shadow:0 22px 60px rgba(0,0,0,.34),0 0 0 1px rgba(255,255,255,.04);
   opacity:0;transform:translateY(8px) scale(.98);transform-origin:top right;pointer-events:none;
@@ -795,8 +795,6 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
   transform:rotate(45deg);border-radius:3px 0 0 0;
 }
 .project-switcher.open .project-switcher-menu{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
-.project-switcher-menu[data-placement="top"]{transform:translateY(-8px) scale(.98);transform-origin:bottom right}
-.project-switcher.open .project-switcher-menu[data-placement="top"]{transform:translateY(0) scale(1)}
 .project-switcher-option{position:relative;width:100%;border:0;background:transparent;color:var(--text-secondary);border-radius:13px;padding:11px 12px;display:flex;align-items:center;gap:10px;text-align:left;transition:background var(--transition),color var(--transition),transform var(--transition),box-shadow var(--transition)}
 .project-switcher-option:hover{background:var(--bg-hover);color:var(--text-primary);transform:translateX(2px)}
 .project-switcher-option.active{background:linear-gradient(135deg,var(--accent-dim),rgba(6,182,212,.10));color:var(--text-primary);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 28%,transparent)}
@@ -3546,34 +3544,10 @@ function renderTopProjectMenu() {
   menu.innerHTML = allOption + (projectOptions || '<div class="project-switcher-empty">No projects yet</div>');
 }
 
-function updateTopProjectMenuPosition() {
-  const btn = document.getElementById('topProjectButton');
-  const menu = document.getElementById('topProjectMenu');
-  if (!btn || !menu) return;
-
-  const gap = 12;
-  const edge = 16;
-  const rect = btn.getBoundingClientRect();
-  const width = Math.min(360, window.innerWidth - (edge * 2));
-  const spaceBelow = window.innerHeight - rect.bottom - gap - edge;
-  const spaceAbove = rect.top - gap - edge;
-  const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
-  const maxHeight = Math.max(160, Math.min(360, (placeAbove ? spaceAbove : spaceBelow)));
-  const left = Math.min(Math.max(edge, rect.right - width), window.innerWidth - width - edge);
-  const top = placeAbove ? Math.max(edge, rect.top - gap - maxHeight) : Math.min(window.innerHeight - edge - maxHeight, rect.bottom + gap);
-
-  menu.style.width = `${width}px`;
-  menu.style.maxHeight = `${maxHeight}px`;
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-  menu.dataset.placement = placeAbove ? 'top' : 'bottom';
-}
-
 function setTopProjectSwitcherOpen(open) {
   const switcher = document.getElementById('topProjectSwitcher');
   const btn = document.getElementById('topProjectButton');
   if (!switcher || !btn) return;
-  if (open) updateTopProjectMenuPosition();
   switcher.classList.toggle('open', open);
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
@@ -3616,13 +3590,6 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') setTopProjectSwitcherOpen(false);
 });
-window.addEventListener('resize', () => {
-  if (document.getElementById('topProjectSwitcher')?.classList.contains('open')) updateTopProjectMenuPosition();
-});
-document.querySelector('.content')?.addEventListener('scroll', () => {
-  if (document.getElementById('topProjectSwitcher')?.classList.contains('open')) updateTopProjectMenuPosition();
-}, { passive: true });
-
 
 document.getElementById('topProjectSelect')?.addEventListener('change', (e) => {
   renderTopProjectMenu();
