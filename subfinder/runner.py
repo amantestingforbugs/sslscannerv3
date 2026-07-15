@@ -17,6 +17,8 @@ import logging
 import os
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import urllib.error
 import urllib.parse
@@ -26,7 +28,7 @@ import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 from core.observability import log_event
 
@@ -40,6 +42,8 @@ MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRE
 ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
 
 PASSIVE_SOURCE_TIMEOUT = max(2, int(os.getenv("SUBDOMAIN_PASSIVE_SOURCE_TIMEOUT", "12")))
+MAX_ENUM_PROVIDER_WORKERS = max(1, int(os.getenv("SUBDOMAIN_ENUM_PROVIDER_WORKERS", "12")))
+_ENUM_USER_AGENT = os.getenv("SUBDOMAIN_ENUM_USER_AGENT", "ssl-sentinel-subdomain-enumerator/1.0")
 
 
 def _candidate_hosts_from_text(text: str, root_domain: str) -> Set[str]:
@@ -70,53 +74,237 @@ def _extract_hosts_from_json(payload: object, root_domain: str) -> Set[str]:
     return hosts
 
 
-def _fetch_passive_url(url: str, timeout: int) -> Tuple[str, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "ssl-sentinel-subdomain-enumerator/1.0"})
+def _fetch_passive_url(url: str, timeout: int, headers: Optional[Dict[str, str]] = None) -> Tuple[str, str]:
+    request_headers = {"User-Agent": _ENUM_USER_AGENT}
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(url, headers=request_headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         content_type = resp.headers.get("content-type", "")
         body = resp.read(5_000_000).decode("utf-8", errors="replace")
     return content_type, body
 
 
-def _passive_source_urls(root_domain: str) -> Dict[str, str]:
-    quoted = urllib.parse.quote(root_domain, safe="")
-    return {
-        "crt.sh": f"https://crt.sh/?q=%25.{quoted}&output=json",
-        "HackerTarget": f"https://api.hackertarget.com/hostsearch/?q={quoted}",
-        "RapidDNS": f"https://rapiddns.io/subdomain/{quoted}?full=1",
-        "AlienVault OTX": f"https://otx.alienvault.com/api/v1/indicators/domain/{quoted}/passive_dns",
-        "urlscan.io": f"https://urlscan.io/api/v1/search/?q=domain:{quoted}",
-        "Wayback Machine": f"https://web.archive.org/cdx?url=*.{quoted}/*&output=json&fl=original&collapse=urlkey",
-    }
 
+ProviderFetcher = Callable[[str, int], Set[str]]
+
+
+class EnumerationProvider:
+    """Small provider wrapper so new subdomain sources can be added declaratively."""
+
+    def __init__(self, name: str, category: str, fetcher: ProviderFetcher, api_key_env: Optional[str] = None):
+        self.name = name
+        self.category = category
+        self.fetcher = fetcher
+        self.api_key_env = api_key_env
+
+    def enabled(self) -> bool:
+        return not self.api_key_env or bool(os.getenv(self.api_key_env))
+
+    def run(self, root_domain: str, timeout: int) -> Set[str]:
+        if not self.enabled():
+            return set()
+        return self.fetcher(root_domain, timeout)
+
+
+def _json_or_text_url_fetcher(url_template: str, headers_factory: Optional[Callable[[], Dict[str, str]]] = None) -> ProviderFetcher:
+    def fetch(root_domain: str, timeout: int) -> Set[str]:
+        quoted = urllib.parse.quote(root_domain, safe="")
+        content_type, body = _fetch_passive_url(url_template.format(domain=quoted, raw_domain=root_domain), timeout, headers_factory() if headers_factory else None)
+        if "json" in content_type.lower() or body.lstrip().startswith(("{", "[")):
+            try:
+                return _extract_hosts_from_json(json.loads(body), root_domain)
+            except json.JSONDecodeError:
+                pass
+        return _candidate_hosts_from_text(body, root_domain)
+    return fetch
+
+
+def _google_ct_fetcher(root_domain: str, timeout: int) -> Set[str]:
+    hosts: Set[str] = set()
+    url = "https://www.google.com/transparencyreport/api/v3/httpsreport/ct/certsearch?domain=%25." + urllib.parse.quote(root_domain, safe="") + "&include_expired=true&include_subdomains=true"
+    _, body = _fetch_passive_url(url, timeout)
+    hosts.update(_candidate_hosts_from_text(body, root_domain))
+    return hosts
+
+
+def _dns_record_fetcher(root_domain: str, timeout: int) -> Set[str]:
+    hosts: Set[str] = set()
+    record_types = ["MX", "TXT", "NS", "SRV"]
+    try:
+        import dns.resolver  # type: ignore
+    except Exception:
+        return hosts
+    resolver = dns.resolver.Resolver()
+    resolver.lifetime = timeout
+    resolver.timeout = min(timeout, 5)
+    names = [root_domain, f"_dmarc.{root_domain}", f"default._domainkey.{root_domain}", f"_sip._tcp.{root_domain}", f"_sip._udp.{root_domain}"]
+    for name in names:
+        for record_type in record_types:
+            try:
+                for answer in resolver.resolve(name, record_type):
+                    hosts.update(_candidate_hosts_from_text(str(answer), root_domain))
+            except Exception:
+                continue
+    return hosts
+
+
+def _tls_san_fetcher(root_domain: str, timeout: int) -> Set[str]:
+    hosts: Set[str] = set()
+    for host in (root_domain, f"www.{root_domain}"):
+        try:
+            ctx = ssl.create_default_context()
+            with socket.create_connection((host, 443), timeout=min(timeout, 8)) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    cert = ssock.getpeercert()
+            for key, value in cert.get("subjectAltName", []):
+                if key.lower() == "dns":
+                    candidate = _normalize_host(value)
+                    if candidate and _HOST_RE.match(candidate) and _is_host_within_root(candidate, root_domain):
+                        hosts.add(candidate)
+        except Exception:
+            continue
+    return hosts
+
+
+def _common_web_fetcher(paths: List[str], source_url: str = "https://{domain}{path}") -> ProviderFetcher:
+    def fetch(root_domain: str, timeout: int) -> Set[str]:
+        hosts: Set[str] = set()
+        for path in paths:
+            try:
+                _, body = _fetch_passive_url(source_url.format(domain=root_domain, path=path), min(timeout, 8))
+                hosts.update(_candidate_hosts_from_text(body, root_domain))
+            except Exception:
+                continue
+        return hosts
+    return fetch
+
+
+def _api_header(env_name: str, template: str = "{key}") -> Callable[[], Dict[str, str]]:
+    return lambda: {"API-Key": template.format(key=os.getenv(env_name, ""))}
+
+
+def _bearer_header(env_name: str) -> Callable[[], Dict[str, str]]:
+    return lambda: {"Authorization": f"Bearer {os.getenv(env_name, '')}"}
+
+
+def _all_enumeration_providers() -> List[EnumerationProvider]:
+    providers = [
+        EnumerationProvider("crt.sh", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        EnumerationProvider("Google Certificate Transparency", "Certificate Transparency", _google_ct_fetcher),
+        EnumerationProvider("Cert Spotter", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
+        EnumerationProvider("SSLMate CT Search", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
+        EnumerationProvider("Facebook Certificate Transparency", "Certificate Transparency", _json_or_text_url_fetcher("https://graph.facebook.com/certificates?query={domain}")),
+        EnumerationProvider("DigiCert CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        EnumerationProvider("Sectigo CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        EnumerationProvider("Let\'s Encrypt CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        EnumerationProvider("Cloudflare Nimbus CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        EnumerationProvider("HackerTarget", "Passive DNS", _json_or_text_url_fetcher("https://api.hackertarget.com/hostsearch/?q={domain}")),
+        EnumerationProvider("RapidDNS", "Passive DNS", _json_or_text_url_fetcher("https://rapiddns.io/subdomain/{domain}?full=1")),
+        EnumerationProvider("AlienVault OTX", "Threat Intelligence", _json_or_text_url_fetcher("https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns")),
+        EnumerationProvider("urlscan.io", "Threat Intelligence", _json_or_text_url_fetcher("https://urlscan.io/api/v1/search/?q=domain:{domain}")),
+        EnumerationProvider("ThreatCrowd", "Threat Intelligence", _json_or_text_url_fetcher("https://www.threatcrowd.org/searchApi/v2/domain/report/?domain={domain}")),
+        EnumerationProvider("Wayback Machine", "Web Archives", _json_or_text_url_fetcher("https://web.archive.org/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey")),
+        EnumerationProvider("Common Crawl", "Web Archives", _json_or_text_url_fetcher("https://index.commoncrawl.org/CC-MAIN-2024-10-index?url=*.{domain}/*&output=json")),
+        EnumerationProvider("DNS Enumeration", "DNS Enumeration", _dns_record_fetcher),
+        EnumerationProvider("Robots & Sitemap Enumeration", "Robots & Sitemap Enumeration", _common_web_fetcher(["/robots.txt", "/sitemap.xml", "/sitemap_index.xml"])),
+        EnumerationProvider("HTML Enumeration", "HTML Enumeration", _common_web_fetcher(["/", "/index.html"])),
+        EnumerationProvider("JavaScript Enumeration", "JavaScript Enumeration", _common_web_fetcher(["/", "/app.js", "/main.js"])),
+        EnumerationProvider("Certificate Collection", "Certificate Collection", _tls_san_fetcher),
+    ]
+    api_providers = [
+        ("SecurityTrails", "Passive DNS", "https://api.securitytrails.com/v1/domain/{domain}/subdomains", "SECURITYTRAILS_API_KEY", _api_header("SECURITYTRAILS_API_KEY")),
+        ("DNSDB (Farsight)", "Passive DNS", "https://api.dnsdb.info/lookup/rrset/name/*.{domain}/ANY", "DNSDB_API_KEY", _api_header("DNSDB_API_KEY", "Bearer {key}")),
+        ("RiskIQ PassiveTotal", "Passive DNS", "https://api.riskiq.net/pt/v2/enrichment/subdomains?query={domain}", "PASSIVETOTAL_API_KEY", _api_header("PASSIVETOTAL_API_KEY")),
+        ("WhoisXML API", "Passive DNS", "https://subdomains.whoisxmlapi.com/api/v1?domainName={domain}&apiKey=" + os.getenv("WHOISXML_API_KEY", ""), "WHOISXML_API_KEY", None),
+        ("VirusTotal Domains", "Passive DNS", "https://www.virustotal.com/api/v3/domains/{domain}/subdomains", "VIRUSTOTAL_API_KEY", lambda: {"x-apikey": os.getenv("VIRUSTOTAL_API_KEY", "")}),
+        ("Shodan", "Internet-wide Search Engines", "https://api.shodan.io/dns/domain/{domain}?key=" + os.getenv("SHODAN_API_KEY", ""), "SHODAN_API_KEY", None),
+        ("Censys", "Internet-wide Search Engines", "https://search.censys.io/api/v2/hosts/search?q={domain}", "CENSYS_API_KEY", _bearer_header("CENSYS_API_KEY")),
+        ("FOFA", "Internet-wide Search Engines", "https://fofa.info/api/v1/search/all?key=" + os.getenv("FOFA_API_KEY", "") + "&qbase64={domain}", "FOFA_API_KEY", None),
+        ("ZoomEye", "Internet-wide Search Engines", "https://api.zoomeye.org/host/search?query={domain}", "ZOOMEYE_API_KEY", _api_header("ZOOMEYE_API_KEY")),
+        ("GitHub code search", "Git Repository Enumeration", "https://api.github.com/search/code?q={domain}", "GITHUB_TOKEN", _bearer_header("GITHUB_TOKEN")),
+    ]
+    for name, category, url, env, headers in api_providers:
+        providers.append(EnumerationProvider(name, category, _json_or_text_url_fetcher(url, headers), env))
+    # Optional providers whose API endpoints, credentials, or commercial plans vary.
+    # Set the corresponding *_URL template (containing {domain}) to enable them;
+    # otherwise they are reported as skipped without affecting the scan.
+    configurable = {
+        "DNSlytics": ("Passive DNS", "DNSLYTICS_URL"), "ViewDNS": ("Passive DNS", "VIEWDNS_URL"), "IBM X-Force Exchange": ("Passive DNS", "XFORCE_URL"), "CIRCL Passive DNS": ("Passive DNS", "CIRCL_PDNS_URL"), "OpenINTEL": ("Passive DNS", "OPENINTEL_URL"),
+        "Hunter How": ("Internet-wide Search Engines", "HUNTERHOW_URL"), "CriminalIP": ("Internet-wide Search Engines", "CRIMINALIP_URL"), "Netlas": ("Internet-wide Search Engines", "NETLAS_URL"), "BinaryEdge": ("Internet-wide Search Engines", "BINARYEDGE_URL"), "LeakIX": ("Internet-wide Search Engines", "LEAKIX_URL"), "ONYPHE": ("Internet-wide Search Engines", "ONYPHE_URL"),
+        "Pulsedive": ("Threat Intelligence", "PULSEDIVE_URL"), "GreyNoise": ("Threat Intelligence", "GREYNOISE_URL"), "Arquivo.pt": ("Web Archives", "ARQUIVO_URL"), "Archive.today": ("Web Archives", "ARCHIVE_TODAY_URL"),
+        "Google Search": ("Search Engine Enumeration", "GOOGLE_SEARCH_URL"), "Bing": ("Search Engine Enumeration", "BING_SEARCH_URL"), "Brave Search": ("Search Engine Enumeration", "BRAVE_SEARCH_URL"), "DuckDuckGo": ("Search Engine Enumeration", "DUCKDUCKGO_URL"), "Yahoo": ("Search Engine Enumeration", "YAHOO_URL"), "Yandex": ("Search Engine Enumeration", "YANDEX_URL"),
+        "GitLab": ("Git Repository Enumeration", "GITLAB_SEARCH_URL"), "Bitbucket": ("Git Repository Enumeration", "BITBUCKET_SEARCH_URL"), "Sourcegraph": ("Git Repository Enumeration", "SOURCEGRAPH_URL"), "Codeberg": ("Git Repository Enumeration", "CODEBERG_URL"),
+        "AWS CloudFront": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"), "AWS API Gateway": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"), "Azure App Service": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"), "Azure Front Door": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"), "Google Cloud Run": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"), "Firebase Hosting": ("Cloud Service Discovery", "CLOUD_DISCOVERY_URL"),
+    }
+    for name, (category, env) in configurable.items():
+        url_template = os.getenv(env, "https://disabled.invalid/?q={domain}")
+        providers.append(EnumerationProvider(name, category, _json_or_text_url_fetcher(url_template), env))
+    return providers
+
+
+def _merge_source_hosts(found_by_source: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    host_sources: Dict[str, List[str]] = {}
+    for source, hosts in found_by_source.items():
+        for host in hosts:
+            host_sources.setdefault(host, []).append(source)
+    return {host: sorted(set(sources)) for host, sources in sorted(host_sources.items())}
+
+def _passive_source_urls(root_domain: str) -> Dict[str, str]:
+    # Kept for compatibility with older tests and raw command summaries.
+    return {provider.name: "provider://" + provider.name for provider in _all_enumeration_providers() if provider.enabled()}
 
 def enumerate_passive_subdomains(root_domain: str, timeout: int = PASSIVE_SOURCE_TIMEOUT) -> Dict[str, object]:
-    """Query built-in passive sources and return in-scope subdomains.
+    """Run passive/active modular providers concurrently and aggregate results.
 
-    These sources require no API key, so a single scan can still enumerate from
-    CT logs, passive DNS/intel APIs, scanners, and web archives even when the
-    subfinder binary or provider config is unavailable.
+    Every provider is isolated: API-key providers are skipped when their key is
+    missing, failures are recorded per source, and all hostnames are normalized
+    before source tagging and deduplication.
     """
     found_by_source: Dict[str, List[str]] = {}
     errors: Dict[str, str] = {}
-    for source, url in _passive_source_urls(root_domain).items():
-        try:
-            content_type, body = _fetch_passive_url(url, timeout)
-            hosts: Set[str] = set()
-            if "json" in content_type.lower() or body.lstrip().startswith(("{", "[")):
-                try:
-                    hosts.update(_extract_hosts_from_json(json.loads(body), root_domain))
-                except json.JSONDecodeError:
-                    hosts.update(_candidate_hosts_from_text(body, root_domain))
-            else:
-                hosts.update(_candidate_hosts_from_text(body, root_domain))
-            found_by_source[source] = sorted(hosts)
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            errors[source] = str(exc)[:500]
-            found_by_source[source] = []
-    all_hosts = sorted({host for hosts in found_by_source.values() for host in hosts})
-    return {"root_domain": root_domain, "found": all_hosts, "sources": found_by_source, "errors": errors}
+    skipped: List[str] = []
+    providers = _all_enumeration_providers()
 
+    def run_provider(provider: EnumerationProvider) -> Tuple[str, Set[str], Optional[str], bool]:
+        if not provider.enabled():
+            return provider.name, set(), None, True
+        try:
+            normalized_hosts = {
+                host
+                for raw_host in provider.run(root_domain, timeout)
+                for host in [_normalize_host(raw_host)]
+                if host and _HOST_RE.match(host) and _is_host_within_root(host, root_domain)
+            }
+            return provider.name, normalized_hosts, None, False
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError) as exc:
+            return provider.name, set(), str(exc)[:500], False
+        except Exception as exc:
+            log.debug("Subdomain provider %s failed for %s", provider.name, root_domain, exc_info=True)
+            return provider.name, set(), str(exc)[:500], False
+
+    workers = max(1, min(MAX_ENUM_PROVIDER_WORKERS, len(providers)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run_provider, provider): provider for provider in providers}
+        for future in as_completed(futures):
+            source, hosts, error, was_skipped = future.result()
+            if was_skipped:
+                skipped.append(source)
+                continue
+            found_by_source[source] = sorted(hosts)
+            if error:
+                errors[source] = error
+
+    host_sources = _merge_source_hosts(found_by_source)
+    all_hosts = sorted(host_sources)
+    return {
+        "root_domain": root_domain,
+        "found": all_hosts,
+        "sources": found_by_source,
+        "host_sources": host_sources,
+        "errors": errors,
+        "skipped": sorted(skipped),
+    }
 
 def _active_subfinder_project_count() -> int:
     with _sf_lock:
@@ -215,6 +403,7 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             "stdout": stdout,
             "stderr": stderr,
             "found": found,
+            "sources": passive.get("host_sources", {}),
         }
     except subprocess.TimeoutExpired:
         msg = f"Subfinder timed out after {timeout}s for {root_domain}"
@@ -336,6 +525,7 @@ def enumerate_subdomains_for_domain(domain: str, timeout: int = 180) -> Dict[str
         "stderr": run.get("stderr", ""),
         "total_found": len(run.get("found") or []),
         "subdomains": run.get("found") or [],
+        "sources": run.get("sources", {}),
     }
 
 

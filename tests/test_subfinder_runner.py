@@ -97,15 +97,35 @@ def test_candidate_hosts_from_text_extracts_in_scope_hosts_only():
 def test_enumerate_passive_subdomains_deduplicates_sources(monkeypatch):
     import subfinder.runner as runner
 
-    responses = {
-        "crt.sh": ('application/json', '[{"name_value":"api.example.com\\n*.cdn.example.com"}]'),
-        "HackerTarget": ('text/plain', 'mail.example.com,1.2.3.4\n'),
-    }
-    monkeypatch.setattr(runner, "_passive_source_urls", lambda domain: {k: f"https://unit.test/{k}" for k in responses})
-    monkeypatch.setattr(runner, "_fetch_passive_url", lambda url, timeout: responses[url.rsplit('/', 1)[-1]])
+    providers = [
+        runner.EnumerationProvider("crt.sh", "Certificate Transparency", lambda domain, timeout: {"api.example.com", "*.cdn.example.com"}),
+        runner.EnumerationProvider("HackerTarget", "Passive DNS", lambda domain, timeout: {"mail.example.com", "api.example.com"}),
+    ]
+    monkeypatch.setattr(runner, "_all_enumeration_providers", lambda: providers)
 
     result = runner.enumerate_passive_subdomains("example.com")
 
     assert result["found"] == ["api.example.com", "cdn.example.com", "mail.example.com"]
     assert result["sources"]["crt.sh"] == ["api.example.com", "cdn.example.com"]
+    assert result["host_sources"]["api.example.com"] == ["HackerTarget", "crt.sh"]
     assert result["errors"] == {}
+
+def test_enumerate_passive_subdomains_skips_missing_api_key_and_records_failures(monkeypatch):
+    import subfinder.runner as runner
+
+    def failing_provider(domain, timeout):
+        raise TimeoutError("rate limited")
+
+    providers = [
+        runner.EnumerationProvider("Optional API", "Passive DNS", lambda domain, timeout: {"hidden.example.com"}, "MISSING_UNIT_API_KEY"),
+        runner.EnumerationProvider("Failing API", "Threat Intelligence", failing_provider),
+        runner.EnumerationProvider("Working API", "Threat Intelligence", lambda domain, timeout: {"OK.EXAMPLE.COM."}),
+    ]
+    monkeypatch.delenv("MISSING_UNIT_API_KEY", raising=False)
+    monkeypatch.setattr(runner, "_all_enumeration_providers", lambda: providers)
+
+    result = runner.enumerate_passive_subdomains("example.com")
+
+    assert result["found"] == ["ok.example.com"]
+    assert result["skipped"] == ["Optional API"]
+    assert "Failing API" in result["errors"]
