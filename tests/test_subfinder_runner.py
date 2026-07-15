@@ -190,3 +190,53 @@ def test_run_subfinder_for_root_uses_subfinder_only(monkeypatch):
     assert result["found"] == ["api.example.com"]
     assert result["sources"] == {"api.example.com": ["Subfinder"]}
     assert "built-in passive sources" not in result["command"]
+
+
+def test_projects_with_root_domains_extracts_roots_from_project_host_lists(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(
+        "db.database.project_list",
+        lambda: [
+            {"id": "p1", "name": "One"},
+            {"id": "p2", "name": "Empty"},
+        ],
+    )
+    monkeypatch.setattr(
+        "db.database.project_hosts",
+        lambda pid: ["https://api.example.com", "www.example.org"] if pid == "p1" else [],
+    )
+
+    projects = runner.projects_with_root_domains()
+
+    assert projects == [{"id": "p1", "name": "One", "root_domains": ["example.com", "example.org"]}]
+
+
+def test_run_subfinder_for_all_projects_async_queues_all_project_roots(monkeypatch):
+    import subfinder.runner as runner
+
+    with runner._sf_lock:
+        runner._sf_state.clear()
+
+    monkeypatch.setattr(
+        runner,
+        "projects_with_root_domains",
+        lambda: [
+            {"id": "p1", "root_domains": ["example.com"]},
+            {"id": "p2", "root_domains": ["example.org"]},
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(runner, "run_subfinder_for_project", lambda pid, triggered_by="manual": calls.append((pid, triggered_by)))
+
+    class FakeThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(runner.threading, "Thread", FakeThread)
+
+    assert runner.run_subfinder_for_all_projects_async(triggered_by="manual") == 2
+    assert calls == [("p1", "manual"), ("p2", "manual")]

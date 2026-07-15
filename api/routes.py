@@ -540,20 +540,37 @@ def list_logs():
 
 # ── Subfinder ─────────────────────────────────────────────────────────────────
 
+@api.post("/subfinder/run-all")
+def run_subfinder_all_projects():
+    from subfinder.runner import run_subfinder_for_all_projects_async, subfinder_available
+
+    started_count = run_subfinder_for_all_projects_async(triggered_by="manual")
+    if not started_count:
+        return err("No projects with root domains are ready, or Subfinder is already running")
+    return ok({
+        "message": "Subfinder started for all projects with root domains",
+        "projects_started": started_count,
+        "binary_found": subfinder_available(),
+    })
+
+
 @api.post("/projects/<pid>/subfinder/run")
 def run_subfinder(pid):
-    from subfinder.runner import run_subfinder_async, subfinder_available
+    from subfinder.runner import _extract_project_root_domains, run_subfinder_async, subfinder_available
     if not pid or pid in {"undefined", "null"}:
         return err("Please select a project before running scan")
     p = db.project_get(pid)
-    if not p: return err("Project not found", 404)
-    if not db.project_hosts(pid):
-        return err("Add a host list first so subfinder knows which root domains to enumerate")
+    if not p:
+        return err("Project not found", 404)
+    root_domains = _extract_project_root_domains(db.project_hosts(pid))
+    if not root_domains:
+        return err("Add a host list with at least one valid root domain so subfinder knows what to enumerate")
     started = run_subfinder_async(pid, triggered_by="manual")
     if not started:
         return err("Subfinder already running for this project")
     return ok({
         "message": "Subfinder started",
+        "root_domains": root_domains,
         "binary_found": subfinder_available()
     })
 
