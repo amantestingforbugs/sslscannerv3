@@ -505,6 +505,19 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         raise
 
 
+def _run_subfinder_worker(project_id: str, triggered_by: str) -> None:
+    """Run a queued subfinder job and release its reservation on setup errors."""
+    try:
+        run_subfinder_for_project(project_id, triggered_by)
+    except Exception as e:
+        # Keep the async reservation from staying active if setup fails before
+        # run_subfinder_for_project reaches its own state/job error handling
+        # (for example project_get/subfinder_job_create failures).
+        log.exception("Subfinder worker setup failed for project=%s: %s", project_id, e)
+        with _sf_lock:
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
+
+
 def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
     """Start subfinder pipeline in background thread. Returns False if at capacity."""
     with _sf_lock:
@@ -523,12 +536,19 @@ def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
         _sf_state[project_id] = {"status": "queued", "job_id": None, "new_count": 0}
 
     t = threading.Thread(
-        target=run_subfinder_for_project,
+        target=_run_subfinder_worker,
         args=(project_id, triggered_by),
         daemon=True,
         name=f"sf-{project_id[:8]}"
     )
-    t.start()
+    try:
+        t.start()
+    except Exception as e:
+        log.exception("Subfinder thread start failed for project=%s: %s", project_id, e)
+        with _sf_lock:
+            if _sf_state.get(project_id, {}).get("status") == "queued":
+                _sf_state.pop(project_id, None)
+        return False
     return True
 
 
