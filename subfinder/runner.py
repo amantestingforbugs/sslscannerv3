@@ -92,11 +92,19 @@ ProviderFetcher = Callable[[str, int], Set[str]]
 class EnumerationProvider:
     """Small provider wrapper so new subdomain sources can be added declaratively."""
 
-    def __init__(self, name: str, category: str, fetcher: ProviderFetcher, api_key_env: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        category: str,
+        fetcher: ProviderFetcher,
+        api_key_env: Optional[str] = None,
+        report_errors: bool = True,
+    ):
         self.name = name
         self.category = category
         self.fetcher = fetcher
         self.api_key_env = api_key_env
+        self.report_errors = report_errors
 
     def enabled(self) -> bool:
         return not self.api_key_env or bool(os.getenv(self.api_key_env))
@@ -118,14 +126,6 @@ def _json_or_text_url_fetcher(url_template: str, headers_factory: Optional[Calla
                 pass
         return _candidate_hosts_from_text(body, root_domain)
     return fetch
-
-
-def _google_ct_fetcher(root_domain: str, timeout: int) -> Set[str]:
-    hosts: Set[str] = set()
-    url = "https://www.google.com/transparencyreport/api/v3/httpsreport/ct/certsearch?domain=%25." + urllib.parse.quote(root_domain, safe="") + "&include_expired=true&include_subdomains=true"
-    _, body = _fetch_passive_url(url, timeout)
-    hosts.update(_candidate_hosts_from_text(body, root_domain))
-    return hosts
 
 
 def _dns_record_fetcher(root_domain: str, timeout: int) -> Set[str]:
@@ -188,20 +188,27 @@ def _bearer_header(env_name: str) -> Callable[[], Dict[str, str]]:
     return lambda: {"Authorization": f"Bearer {os.getenv(env_name, '')}"}
 
 
+def _public_provider(name: str, category: str, fetcher: ProviderFetcher) -> EnumerationProvider:
+    # Public unauthenticated sources routinely rate-limit, retire endpoints, or
+    # reject automated requests. Treat those outages as a coverage reduction, not
+    # as a scan error, so the UI never reports a successful enumeration as broken.
+    return EnumerationProvider(name, category, fetcher, report_errors=False)
+
+
 def _all_enumeration_providers() -> List[EnumerationProvider]:
     providers = [
         # Use maintained public CT search APIs only. Several historical entries
         # (Google/Facebook CT search and log-operator names backed by crt.sh) are
         # no longer public query APIs or were duplicate aliases that produced
         # noisy 400/404 errors in the UI without adding unique coverage.
-        EnumerationProvider("crt.sh", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
-        EnumerationProvider("Cert Spotter", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
-        EnumerationProvider("HackerTarget", "Passive DNS", _json_or_text_url_fetcher("https://api.hackertarget.com/hostsearch/?q={domain}")),
-        EnumerationProvider("RapidDNS", "Passive DNS", _json_or_text_url_fetcher("https://rapiddns.io/subdomain/{domain}?full=1")),
-        EnumerationProvider("AlienVault OTX", "Threat Intelligence", _json_or_text_url_fetcher("https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns")),
-        EnumerationProvider("urlscan.io", "Threat Intelligence", _json_or_text_url_fetcher("https://urlscan.io/api/v1/search/?q=domain:{domain}")),
-        EnumerationProvider("Wayback Machine", "Web Archives", _json_or_text_url_fetcher("https://web.archive.org/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey")),
-        EnumerationProvider("Common Crawl", "Web Archives", _json_or_text_url_fetcher("https://index.commoncrawl.org/CC-MAIN-2024-10-index?url=*.{domain}/*&output=json")),
+        _public_provider("crt.sh", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
+        _public_provider("Cert Spotter", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
+        _public_provider("HackerTarget", "Passive DNS", _json_or_text_url_fetcher("https://api.hackertarget.com/hostsearch/?q={domain}")),
+        _public_provider("RapidDNS", "Passive DNS", _json_or_text_url_fetcher("https://rapiddns.io/subdomain/{domain}?full=1")),
+        _public_provider("AlienVault OTX", "Threat Intelligence", _json_or_text_url_fetcher("https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns")),
+        _public_provider("urlscan.io", "Threat Intelligence", _json_or_text_url_fetcher("https://urlscan.io/api/v1/search/?q=domain:{domain}")),
+        _public_provider("Wayback Machine", "Web Archives", _json_or_text_url_fetcher("https://web.archive.org/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey")),
+        _public_provider("Common Crawl", "Web Archives", _json_or_text_url_fetcher("https://index.commoncrawl.org/CC-MAIN-2024-10-index?url=*.{domain}/*&output=json")),
         EnumerationProvider("DNS Enumeration", "DNS Enumeration", _dns_record_fetcher),
         EnumerationProvider("Robots & Sitemap Enumeration", "Robots & Sitemap Enumeration", _common_web_fetcher(["/robots.txt", "/sitemap.xml", "/sitemap_index.xml"])),
         EnumerationProvider("HTML Enumeration", "HTML Enumeration", _common_web_fetcher(["/", "/index.html"])),
@@ -288,7 +295,7 @@ def enumerate_passive_subdomains(root_domain: str, timeout: int = PASSIVE_SOURCE
                 skipped.append(source)
                 continue
             found_by_source[source] = sorted(hosts)
-            if error:
+            if error and futures[future].report_errors:
                 errors[source] = error
 
     host_sources = _merge_source_hosts(found_by_source)
