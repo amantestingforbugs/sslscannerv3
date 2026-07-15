@@ -1604,7 +1604,28 @@ const PAGE_TITLES = {
   alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subfinder-raw':'Subfinder Raw Results', 'subdomain-tool':'Subdomain Enumeration', logs:'Logs', settings:'Settings'
 };
 
-function nav(name) {
+function routeForPage(name) {
+  if (name === 'detail' && curPid) return `#detail/${encodeURIComponent(curPid)}`;
+  return `#${encodeURIComponent(name)}`;
+}
+
+function pageFromRoute() {
+  const raw = window.location.hash.replace(/^#/, '');
+  if (!raw) return { name: localStorage.getItem('sslSentinel:lastPage') || 'dashboard' };
+  const [name, id] = raw.split('/').map(decodeURIComponent);
+  return { name: name || 'dashboard', id: id || null };
+}
+
+function persistRoute(name, opts = {}) {
+  localStorage.setItem('sslSentinel:lastPage', name);
+  const nextHash = routeForPage(name);
+  if (window.location.hash !== nextHash) {
+    const method = opts.replace ? 'replaceState' : 'pushState';
+    history[method](null, '', `${window.location.pathname}${window.location.search}${nextHash}`);
+  }
+}
+
+function nav(name, opts = {}) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const pg = document.getElementById('page-'+name);
@@ -1621,6 +1642,7 @@ function nav(name) {
   if (name==='subfinder-raw') initSfRawPage();
   if (name==='subdomain-tool') initSubdomainToolPage();
   if (name==='logs') loadLogsPage();
+  if (!opts.skipRoute) persistRoute(name, opts);
   if (name==='settings') loadAlertSettings();
 }
 
@@ -2141,8 +2163,8 @@ async function createProject() {
 // ════════════════════════════════════════════════════════════
 // PROJECT DETAIL
 // ════════════════════════════════════════════════════════════
-async function openProject(pid) {
-  curPid = pid; nav('detail');
+async function openProject(pid, opts = {}) {
+  curPid = pid; nav('detail', opts);
   try {
     const { data: p } = await fetch(`/api/projects/${pid}`).then(r=>r.json());
     document.getElementById('det-name').textContent = p.name;
@@ -2854,8 +2876,31 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════
+function restoreRoute() {
+  const { name, id } = pageFromRoute();
+  if (name === 'detail') {
+    if (id) {
+      openProject(id, { replace: !window.location.hash });
+    } else {
+      nav('projects', { replace: true });
+    }
+    return;
+  }
+  if (document.getElementById(`page-${name}`)) {
+    nav(name, { replace: !window.location.hash });
+  } else {
+    nav('dashboard', { replace: true });
+  }
+}
+
+window.addEventListener('hashchange', () => {
+  const { name, id } = pageFromRoute();
+  if (name === 'detail' && id) openProject(id, { skipRoute: true });
+  else if (document.getElementById(`page-${name}`)) nav(name, { skipRoute: true });
+});
+
 initGenericTableSorting();
-loadDash();
+restoreRoute();
 hydrateTopProjectSelect();
 document.getElementById('alerts-search')?.addEventListener('input', debounce(() => {
   alertsCurPage = 1;
