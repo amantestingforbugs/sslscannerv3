@@ -791,11 +791,11 @@ tbody tr:last-child td{border-bottom:none}
 <aside class="sidebar" id="appSidebar">
   <div class="sidebar-logo">
     <div class="logo-mark">S</div>
-    <button class="sidebar-toggle" id="sidebarToggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar" aria-controls="appSidebar" aria-expanded="true" onclick="toggleSidebar()">✕</button>
     <div class="logo-copy">
       <div class="logo-text">SSL Sentinel</div>
       <div class="logo-sub">Certificate Monitor</div>
     </div>
+    <button class="sidebar-toggle" id="sidebarToggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar" aria-controls="appSidebar" aria-expanded="true" onclick="toggleSidebar()">☰</button>
   </div>
 
   <div class="sidebar-status-card" aria-label="Certificate coverage summary">
@@ -1853,7 +1853,7 @@ function toggleSidebar(forceOpen) {
   btn.setAttribute('aria-expanded', shouldCollapse ? 'false' : 'true');
   btn.setAttribute('aria-label', shouldCollapse ? 'Expand sidebar' : 'Collapse sidebar');
   btn.title = shouldCollapse ? 'Expand sidebar' : 'Collapse sidebar';
-  btn.textContent = shouldCollapse ? '☰' : '✕';
+  btn.textContent = '☰';
 }
 
 function renderOpsTimeline(items = []) {
