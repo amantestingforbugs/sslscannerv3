@@ -1215,7 +1215,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="page-header">
         <div>
           <div class="page-title">Subdomain Enumeration</div>
-          <div class="page-sub">Enter any domain to enumerate subdomains with ProjectDiscovery Subfinder.</div>
+          <div class="page-sub">Enter any domain to enumerate subdomains in one scan using Subfinder plus built-in passive sources such as crt.sh, HackerTarget, RapidDNS, AlienVault OTX, urlscan.io, and Wayback Machine.</div>
         </div>
       </div>
       <div class="form-row" style="margin-bottom:14px;max-width:760px">
@@ -1255,7 +1255,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="card" id="subdomain-tool-results-card">
           <div class="card-body" style="padding-bottom:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains.</div>
+              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains from Subfinder and built-in passive sources.</div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
                 <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
@@ -2383,7 +2383,7 @@ function updateSubdomainToolProgress(state={}) {
   pauseBtn.textContent = subdomainToolStatus === 'paused' ? '▶ Resume' : '⏸ Pause';
   stopBtn.disabled = !active || subdomainToolStatus === 'stopping';
   document.getElementById('subdomain-tool-btn').disabled = false;
-  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains.');
+  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains from Subfinder and built-in passive sources.');
 }
 
 async function initSubdomainToolPage() {

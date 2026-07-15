@@ -18,12 +18,15 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 import threading
 import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 from core.observability import log_event
 
@@ -35,6 +38,84 @@ _sf_state = {}  # project_id -> {status, job_id, new_count}
 _subfinder_all_flag_supported: Optional[bool] = None
 MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRENT_PROJECTS", "1")))
 ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
+
+PASSIVE_SOURCE_TIMEOUT = max(2, int(os.getenv("SUBDOMAIN_PASSIVE_SOURCE_TIMEOUT", "12")))
+
+
+def _candidate_hosts_from_text(text: str, root_domain: str) -> Set[str]:
+    """Extract in-scope hostnames from arbitrary source output."""
+    if not text:
+        return set()
+    escaped_root = re.escape(root_domain)
+    host_pattern = re.compile(rf"(?:\*\.)?(?:[a-z0-9-]+\.)+{escaped_root}", re.IGNORECASE)
+    hosts: Set[str] = set()
+    for match in host_pattern.finditer(text):
+        host = _normalize_host(match.group(0))
+        if host and _HOST_RE.match(host) and _is_host_within_root(host, root_domain):
+            hosts.add(host)
+    return hosts
+
+
+def _extract_hosts_from_json(payload: object, root_domain: str) -> Set[str]:
+    """Recursively extract in-scope hostnames from JSON API responses."""
+    hosts: Set[str] = set()
+    if isinstance(payload, dict):
+        for value in payload.values():
+            hosts.update(_extract_hosts_from_json(value, root_domain))
+    elif isinstance(payload, list):
+        for item in payload:
+            hosts.update(_extract_hosts_from_json(item, root_domain))
+    elif isinstance(payload, str):
+        hosts.update(_candidate_hosts_from_text(payload, root_domain))
+    return hosts
+
+
+def _fetch_passive_url(url: str, timeout: int) -> Tuple[str, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "ssl-sentinel-subdomain-enumerator/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        content_type = resp.headers.get("content-type", "")
+        body = resp.read(5_000_000).decode("utf-8", errors="replace")
+    return content_type, body
+
+
+def _passive_source_urls(root_domain: str) -> Dict[str, str]:
+    quoted = urllib.parse.quote(root_domain, safe="")
+    return {
+        "crt.sh": f"https://crt.sh/?q=%25.{quoted}&output=json",
+        "HackerTarget": f"https://api.hackertarget.com/hostsearch/?q={quoted}",
+        "RapidDNS": f"https://rapiddns.io/subdomain/{quoted}?full=1",
+        "AlienVault OTX": f"https://otx.alienvault.com/api/v1/indicators/domain/{quoted}/passive_dns",
+        "urlscan.io": f"https://urlscan.io/api/v1/search/?q=domain:{quoted}",
+        "Wayback Machine": f"https://web.archive.org/cdx?url=*.{quoted}/*&output=json&fl=original&collapse=urlkey",
+    }
+
+
+def enumerate_passive_subdomains(root_domain: str, timeout: int = PASSIVE_SOURCE_TIMEOUT) -> Dict[str, object]:
+    """Query built-in passive sources and return in-scope subdomains.
+
+    These sources require no API key, so a single scan can still enumerate from
+    CT logs, passive DNS/intel APIs, scanners, and web archives even when the
+    subfinder binary or provider config is unavailable.
+    """
+    found_by_source: Dict[str, List[str]] = {}
+    errors: Dict[str, str] = {}
+    for source, url in _passive_source_urls(root_domain).items():
+        try:
+            content_type, body = _fetch_passive_url(url, timeout)
+            hosts: Set[str] = set()
+            if "json" in content_type.lower() or body.lstrip().startswith(("{", "[")):
+                try:
+                    hosts.update(_extract_hosts_from_json(json.loads(body), root_domain))
+                except json.JSONDecodeError:
+                    hosts.update(_candidate_hosts_from_text(body, root_domain))
+            else:
+                hosts.update(_candidate_hosts_from_text(body, root_domain))
+            found_by_source[source] = sorted(hosts)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            errors[source] = str(exc)[:500]
+            found_by_source[source] = []
+    all_hosts = sorted({host for hosts in found_by_source.values() for host in hosts})
+    return {"root_domain": root_domain, "found": all_hosts, "sources": found_by_source, "errors": errors}
 
 
 def _active_subfinder_project_count() -> int:
@@ -87,47 +168,52 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
 
 def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
-    if not subfinder_bin:
-        return {
-            "root_domain": root_domain,
-            "command": "subfinder -d <domain> -silent -timeout 30",
-            "status": "error",
-            "exit_code": None,
-            "stdout": "",
-            "stderr": "subfinder binary not found in PATH or /usr/local/bin/subfinder",
-            "found": [],
-        }
-    cmd = _build_subfinder_cmd(subfinder_bin, root_domain)
-    command_str = " ".join(cmd)
-    log.info("Subfinder start (bin=%s): %s", subfinder_bin, command_str)
-    log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=command_str, status="running")
+    cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
+    passive_command = "built-in passive sources: " + ", ".join(_passive_source_urls(root_domain).keys())
+    command_str = " && ".join(filter(None, [" ".join(cmd), passive_command]))
+    subfinder_stdout = ""
+    subfinder_stderr = ""
+    subfinder_code = None
+    subfinder_found: List[str] = []
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        raw_lines = [ln.strip().lower() for ln in result.stdout.splitlines() if ln.strip()]
-        found = sorted(
-            {
-                candidate
-                for ln in raw_lines
-                for candidate in [_normalize_host(ln)]
-                if candidate
-                and _HOST_RE.match(candidate)
-                and _is_host_within_root(candidate, root_domain)
-            }
-        )
-        status = "done" if result.returncode == 0 else "error"
-        log.info(
-            "Subfinder finished root=%s exit_code=%s discovered=%d",
-            root_domain,
-            result.returncode,
-            len(found),
-        )
+        if subfinder_bin:
+            log.info("Subfinder start (bin=%s): %s", subfinder_bin, " ".join(cmd))
+            log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=" ".join(cmd), status="running")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            subfinder_stdout = result.stdout or ""
+            subfinder_stderr = result.stderr or ""
+            subfinder_code = result.returncode
+            raw_lines = [ln.strip().lower() for ln in subfinder_stdout.splitlines() if ln.strip()]
+            subfinder_found = sorted(
+                {
+                    candidate
+                    for ln in raw_lines
+                    for candidate in [_normalize_host(ln)]
+                    if candidate
+                    and _HOST_RE.match(candidate)
+                    and _is_host_within_root(candidate, root_domain)
+                }
+            )
+        else:
+            subfinder_stderr = "subfinder binary not found in PATH or /usr/local/bin/subfinder; used built-in passive sources"
+
+        passive = enumerate_passive_subdomains(root_domain)
+        passive_found = passive.get("found") or []
+        found = sorted(set(subfinder_found) | set(passive_found))
+        status = "done" if (subfinder_code in (0, None) or found) else "error"
+        passive_summary = json.dumps({"sources": passive.get("sources", {}), "errors": passive.get("errors", {})}, separators=(",", ":"))
+        stdout = "\n".join(filter(None, [subfinder_stdout, passive_summary]))
+        stderr = subfinder_stderr
+        if passive.get("errors"):
+            stderr = "\n".join(filter(None, [stderr, "Passive source errors: " + json.dumps(passive.get("errors"), separators=(",", ":"))]))
+        log.info("Subdomain enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
         return {
             "root_domain": root_domain,
             "command": command_str,
             "status": status,
-            "exit_code": result.returncode,
-            "stdout": result.stdout or "",
-            "stderr": result.stderr or "",
+            "exit_code": subfinder_code,
+            "stdout": stdout,
+            "stderr": stderr,
             "found": found,
         }
     except subprocess.TimeoutExpired:
