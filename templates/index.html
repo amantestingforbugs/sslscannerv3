@@ -1384,7 +1384,8 @@ tbody tr:last-child td{border-bottom:none}
           <label class="form-label">Domain</label>
           <input class="form-input" id="subdomain-tool-domain" placeholder="example.com" onkeydown="if(event.key==='Enter') runSubdomainEnumeration()">
         </div>
-        <button class="btn btn-primary" style="height:36px" id="subdomain-tool-btn" onclick="runSubdomainEnumeration()">🔍 Enumerate</button>
+        <button class="btn btn-primary" style="height:36px" id="subdomain-tool-btn" onclick="runSubdomainEnumeration('subfinder')">🔍 Subfinder</button>
+        <button class="btn" style="height:36px" id="subdomain-tool-passive-btn" onclick="runSubdomainEnumeration('passive')">🌐 Passive Sources</button>
       </div>
       <div class="card" id="subdomain-tool-progress" style="display:none;margin-bottom:14px">
         <div class="card-body">
@@ -1416,7 +1417,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="card" id="subdomain-tool-results-card">
           <div class="card-body" style="padding-bottom:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains from Subfinder and built-in passive sources.</div>
+              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain, then run Subfinder or a separate passive-source scan.</div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
                 <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
@@ -2591,7 +2592,7 @@ function renderSubdomainToolHistory(scans=[]) {
     const timestamp = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
     return `<button class="subdomain-scan-card${selected}" onclick="openSubdomainToolScan('${scan.id || scan.scan_id}')">
       <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${badgeClass}">${esc(scan.status || 'queued')}</span></div>
-      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
+      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(scan.scan_type === 'passive' ? 'Passive' : 'Subfinder')}</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
     </button>`;
   }).join('');
 }
@@ -2656,6 +2657,8 @@ function changeSubdomainToolPage(delta) {
   renderSubdomainToolRows(subdomainToolRows);
 }
 
+function subdomainToolLabel(scanType) { return scanType === 'passive' ? 'Passive sources' : 'Subfinder'; }
+
 function updateSubdomainToolProgress(state={}) {
   subdomainToolStatus = state.status || subdomainToolStatus || 'idle';
   const active = ['queued','running','paused','stopping'].includes(subdomainToolStatus);
@@ -2671,7 +2674,8 @@ function updateSubdomainToolProgress(state={}) {
   pauseBtn.textContent = subdomainToolStatus === 'paused' ? '▶ Resume' : '⏸ Pause';
   stopBtn.disabled = !active || subdomainToolStatus === 'stopping';
   document.getElementById('subdomain-tool-btn').disabled = false;
-  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains from Subfinder and built-in passive sources.');
+  document.getElementById('subdomain-tool-passive-btn').disabled = false;
+  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Scan: ${subdomainToolLabel(state.scan_type)} · Status: ${subdomainToolStatus}` : 'Enter a domain, then run Subfinder or a separate passive-source scan.');
 }
 
 async function initSubdomainToolPage() {
@@ -2715,7 +2719,7 @@ async function pollSubdomainToolScan() {
   } catch (e) { toast(e.message || 'Unable to load subdomain scan status', 'err'); }
 }
 
-async function runSubdomainEnumeration() {
+async function runSubdomainEnumeration(scanType='subfinder') {
   const input = document.getElementById('subdomain-tool-domain');
   const domain = (input.value || '').trim();
   if (!domain) { toast('Enter a domain to enumerate', 'err'); return; }
@@ -2723,15 +2727,15 @@ async function runSubdomainEnumeration() {
   subdomainToolRows = [];
   subdomainToolPage = 1;
   renderSubdomainToolRows([]);
-  updateSubdomainToolProgress({status:'queued', domain, total_found:0});
+  updateSubdomainToolProgress({status:'queued', domain, scan_type:scanType, total_found:0});
   try {
     const { data } = await apiJSON('/api/tools/subdomains', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain, scan_type: scanType }),
     });
     subdomainToolScanId = data.scan_id;
     upsertSubdomainToolHistory(data);
     updateSubdomainToolProgress(data);
-    if (!data?.binary_available) toast('Subfinder binary not found on server', 'err');
+    if (scanType === 'subfinder' && !data?.binary_available) toast('Subfinder binary not found on server', 'err');
     subdomainToolPollTimer = setInterval(pollSubdomainToolScan, 1500);
     await pollSubdomainToolScan();
   } catch (e) {

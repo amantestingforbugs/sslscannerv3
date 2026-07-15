@@ -8,7 +8,7 @@ How it works:
   3. Deduplicates against previously stored hosts
   4. New hosts are written to subfinder_hosts table
   5. New hosts are immediately queued for SSL scanning
-  6. Falls back to simulation mode if subfinder binary not found
+  6. Reports an error if the subfinder binary is not available
 """
 
 import gzip
@@ -360,8 +360,7 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
 def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
-    passive_command = "built-in passive sources: " + ", ".join(_passive_source_urls(root_domain).keys())
-    command_str = " && ".join(filter(None, [" ".join(cmd), passive_command]))
+    command_str = " ".join(cmd) if cmd else "subfinder binary not found"
     subfinder_stdout = ""
     subfinder_stderr = ""
     subfinder_code = None
@@ -386,20 +385,14 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
                 }
             )
         else:
-            subfinder_stderr = "subfinder binary not found in PATH or /usr/local/bin/subfinder; used built-in passive sources"
+            subfinder_stderr = "subfinder binary not found in PATH or /usr/local/bin/subfinder"
+            subfinder_code = 127
 
-        passive = enumerate_passive_subdomains(root_domain)
-        passive_found = passive.get("found") or []
-        found = sorted(set(subfinder_found) | set(passive_found))
-        status = "done" if (subfinder_code in (0, None) or found) else "error"
-        passive_summary = json.dumps({"sources": passive.get("sources", {}), "errors": passive.get("errors", {})}, separators=(",", ":"))
-        stdout = "\n".join(filter(None, [subfinder_stdout, passive_summary]))
+        found = sorted(subfinder_found)
+        status = "done" if subfinder_code == 0 else "error"
+        stdout = subfinder_stdout
         stderr = subfinder_stderr
-        # Passive provider failures are non-fatal and are already included in
-        # the machine-readable stdout summary. Do not surface transient public
-        # source failures as scan stderr because that makes successful scans look
-        # broken in the UI.
-        log.info("Subdomain enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
+        log.info("Subfinder enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
         return {
             "root_domain": root_domain,
             "command": command_str,
@@ -408,7 +401,7 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             "stdout": stdout,
             "stderr": stderr,
             "found": found,
-            "sources": passive.get("host_sources", {}),
+            "sources": {host: ["Subfinder"] for host in found},
         }
     except subprocess.TimeoutExpired:
         msg = f"Subfinder timed out after {timeout}s for {root_domain}"
