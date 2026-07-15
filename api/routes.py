@@ -12,6 +12,11 @@ import queue
 import threading
 import time
 import logging
+import csv
+import io
+import os
+import signal
+import subprocess
 from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 
@@ -38,6 +43,12 @@ _quick_scan_threads: dict[str, threading.Thread] = {}
 _quick_scan_state: dict[str, dict] = {}
 _quick_scan_lock = threading.Lock()
 QUICK_SCAN_ROWS_BUFFER = 500
+
+_subdomain_tool_lock = threading.Lock()
+_subdomain_tool_state: dict[str, dict] = {}
+_subdomain_tool_threads: dict[str, threading.Thread] = {}
+_subdomain_tool_processes: dict[str, subprocess.Popen] = {}
+ACTIVE_SUBDOMAIN_TOOL_STATUSES = {"queued", "running", "paused", "stopping"}
 
 
 def broadcast(event: str, data: dict):
@@ -589,22 +600,183 @@ def toggle_subfinder(pid):
     return ok({"subfinder_enabled": new_val})
 
 
+def _subdomain_tool_public_state(sid: str) -> dict:
+    with _subdomain_tool_lock:
+        state = dict(_subdomain_tool_state.get(sid) or {})
+    if state:
+        state.pop("process", None)
+    return state
+
+
+def _subdomain_tool_worker(sid: str):
+    from subfinder.runner import _build_subfinder_cmd, _is_host_within_root, _normalize_host, _resolve_subfinder_bin, _HOST_RE
+
+    with _subdomain_tool_lock:
+        state = _subdomain_tool_state.get(sid) or {}
+        domain = state.get("domain", "")
+    subfinder_bin = _resolve_subfinder_bin()
+    if not subfinder_bin:
+        with _subdomain_tool_lock:
+            state = _subdomain_tool_state.get(sid)
+            if state:
+                state.update({"status": "error", "error": "subfinder binary not found in PATH or /usr/local/bin/subfinder", "finished_at": db.now()})
+        broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
+        return
+
+    cmd = _build_subfinder_cmd(subfinder_bin, domain)
+    found: set[str] = set()
+    stderr_lines: list[str] = []
+    stderr_text = ""
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        with _subdomain_tool_lock:
+            _subdomain_tool_processes[sid] = proc
+            state = _subdomain_tool_state.get(sid)
+            if state:
+                state.update({"status": "running", "command": " ".join(cmd), "pid": proc.pid})
+        broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
+
+        def _read_stderr():
+            if proc.stderr is None:
+                return
+            for err_line in proc.stderr:
+                stderr_lines.append(err_line)
+
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True, name=f"subdomain-tool-stderr-{sid[:8]}")
+        stderr_thread.start()
+
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            host = _normalize_host(line.strip())
+            if host and _HOST_RE.match(host) and _is_host_within_root(host, domain) and host not in found:
+                found.add(host)
+                with _subdomain_tool_lock:
+                    state = _subdomain_tool_state.get(sid)
+                    if not state:
+                        continue
+                    state["subdomains"] = sorted(found)
+                    state["total_found"] = len(found)
+                    state["updated_at"] = db.now()
+                    status = state.get("status")
+                broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": status})
+        proc.wait(timeout=2)
+        stderr_thread.join(timeout=1)
+        stderr_text = "".join(stderr_lines)
+        code = proc.returncode
+        with _subdomain_tool_lock:
+            state = _subdomain_tool_state.get(sid)
+            current_status = state.get("status") if state else ""
+            final_status = "stopped" if current_status == "stopping" or code in {-15, -9} else ("done" if code == 0 else "error")
+            if state:
+                state.update({"status": final_status, "exit_code": code, "stderr": stderr_text or "", "finished_at": db.now(), "total_found": len(found), "subdomains": sorted(found)})
+    except Exception as e:
+        with _subdomain_tool_lock:
+            state = _subdomain_tool_state.get(sid)
+            if state:
+                stderr_text = stderr_text or "".join(stderr_lines)
+                state.update({"status": "error", "error": str(e), "stderr": stderr_text or str(e), "finished_at": db.now(), "subdomains": sorted(found), "total_found": len(found)})
+    finally:
+        with _subdomain_tool_lock:
+            _subdomain_tool_processes.pop(sid, None)
+        broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
+
+
 @api.post("/tools/subdomains")
 def enumerate_subdomains_tool():
     d = request.json or {}
     domain = _normalize_domain(d.get("domain", ""))
     if not domain:
         return err("Enter a valid domain, for example example.com")
-    try:
-        from subfinder.runner import enumerate_subdomains_for_domain, subfinder_available
-        result = enumerate_subdomains_for_domain(domain)
-    except Exception as e:
-        return err(f"Subdomain enumeration failed: {e}", 500)
-    return ok({
-        "domain": domain,
-        "binary_available": subfinder_available(),
-        **result,
-    })
+    sid = db.uid()
+    with _subdomain_tool_lock:
+        _subdomain_tool_state[sid] = {"id": sid, "domain": domain, "status": "queued", "total_found": 0, "subdomains": [], "started_at": db.now(), "updated_at": db.now(), "finished_at": None, "exit_code": None, "stderr": ""}
+    th = threading.Thread(target=_subdomain_tool_worker, args=(sid,), daemon=True, name=f"subdomain-tool-{sid[:8]}")
+    with _subdomain_tool_lock:
+        _subdomain_tool_threads[sid] = th
+    th.start()
+    from subfinder.runner import subfinder_available
+    return ok({"scan_id": sid, "domain": domain, "status": "queued", "binary_available": subfinder_available()})
+
+
+@api.get("/tools/subdomains/<sid>")
+def subdomain_tool_status(sid):
+    state = _subdomain_tool_public_state(sid)
+    if not state:
+        return err("Subdomain enumeration scan not found", 404)
+    return ok(state)
+
+
+@api.post("/tools/subdomains/<sid>/pause")
+def pause_subdomain_tool(sid):
+    with _subdomain_tool_lock:
+        proc = _subdomain_tool_processes.get(sid)
+        state = _subdomain_tool_state.get(sid)
+        if not proc or not state or state.get("status") != "running":
+            return err("Subdomain enumeration scan is not running", 409)
+        os.kill(proc.pid, signal.SIGSTOP)
+        state["status"] = "paused"
+        state["updated_at"] = db.now()
+    payload = _subdomain_tool_public_state(sid)
+    broadcast("subdomain_tool_update", payload)
+    return ok(payload)
+
+
+@api.post("/tools/subdomains/<sid>/resume")
+def resume_subdomain_tool(sid):
+    with _subdomain_tool_lock:
+        proc = _subdomain_tool_processes.get(sid)
+        state = _subdomain_tool_state.get(sid)
+        if not proc or not state or state.get("status") != "paused":
+            return err("Subdomain enumeration scan is not paused", 409)
+        os.kill(proc.pid, signal.SIGCONT)
+        state["status"] = "running"
+        state["updated_at"] = db.now()
+    payload = _subdomain_tool_public_state(sid)
+    broadcast("subdomain_tool_update", payload)
+    return ok(payload)
+
+
+@api.post("/tools/subdomains/<sid>/stop")
+def stop_subdomain_tool(sid):
+    with _subdomain_tool_lock:
+        proc = _subdomain_tool_processes.get(sid)
+        state = _subdomain_tool_state.get(sid)
+        if not state or state.get("status") not in ACTIVE_SUBDOMAIN_TOOL_STATUSES:
+            return err("Subdomain enumeration scan is not active", 409)
+        was_paused = state.get("status") == "paused"
+        state["status"] = "stopping"
+        state["updated_at"] = db.now()
+        if proc:
+            if was_paused:
+                os.kill(proc.pid, signal.SIGCONT)
+            proc.terminate()
+    payload = _subdomain_tool_public_state(sid)
+    broadcast("subdomain_tool_update", payload)
+    return ok(payload)
+
+
+@api.get("/tools/subdomains/<sid>/export.<fmt>")
+def export_subdomain_tool(sid, fmt):
+    state = _subdomain_tool_public_state(sid)
+    if not state:
+        return err("Subdomain enumeration scan not found", 404)
+    rows = state.get("subdomains") or []
+    domain = state.get("domain") or "subdomains"
+    if fmt == "txt":
+        body = "\n".join(rows) + ("\n" if rows else "")
+        mimetype = "text/plain; charset=utf-8"
+    elif fmt == "csv":
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(["subdomain"])
+        for host in rows:
+            writer.writerow([host])
+        body = out.getvalue()
+        mimetype = "text/csv; charset=utf-8"
+    else:
+        return err("Export format must be txt or csv", 400)
+    safe_domain = "".join(ch if ch.isalnum() or ch in ".-" else "_" for ch in domain)
+    return Response(body, mimetype=mimetype, headers={"Content-Disposition": f"attachment; filename=subdomains-{safe_domain}.{fmt}"})
 
 
 # ── Background SSE broadcaster for scan progress ───────────────────────────────

@@ -1210,9 +1210,30 @@ tbody tr:last-child td{border-bottom:none}
         </div>
         <button class="btn btn-primary" style="height:36px" id="subdomain-tool-btn" onclick="runSubdomainEnumeration()">🔍 Enumerate</button>
       </div>
+      <div class="card" id="subdomain-tool-progress" style="display:none;margin-bottom:14px">
+        <div class="card-body">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+            <div>
+              <div class="card-title" id="subdomain-tool-status">Ready</div>
+              <div id="subdomain-tool-detail" style="font-size:12px;color:var(--text-secondary);margin-top:4px">No active enumeration.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" id="subdomain-tool-pause-btn" onclick="toggleSubdomainToolPause()" disabled>⏸ Pause</button>
+              <button class="btn btn-sm btn-danger" id="subdomain-tool-stop-btn" onclick="stopSubdomainToolScan()" disabled>⏹ Stop</button>
+            </div>
+          </div>
+          <div class="progress-wrap"><div class="progress-bar" id="subdomain-tool-progress-fill" style="width:0%"></div></div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-body" style="padding-bottom:8px">
-          <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">Enter a domain to find subdomains.</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains.</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
+              <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Subdomain</th></tr></thead>
@@ -1417,6 +1438,9 @@ let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [], alertsCurPage = 1, alertsTotalPages = 1;
 let projectsCache = [];
 let subdomainToolRows = [];
+let subdomainToolScanId = null;
+let subdomainToolStatus = "idle";
+let subdomainToolPollTimer = null;
 let quickScanId = null;
 let quickRows = [];
 let quickRowsByHost = new Map();
@@ -1724,6 +1748,26 @@ function connectSSE() {
     if (document.getElementById('page-dashboard').classList.contains('active')) {
       refreshActiveScans();
     }
+  });
+
+
+  es.addEventListener('subdomain_tool_result', e => {
+    const d = JSON.parse(e.data);
+    if (d.scan_id !== subdomainToolScanId) return;
+    if (d.subdomain && !subdomainToolRows.includes(d.subdomain)) {
+      subdomainToolRows.push(d.subdomain);
+      subdomainToolRows.sort();
+      renderSubdomainToolRows(subdomainToolRows);
+    }
+    updateSubdomainToolProgress({status:d.status || subdomainToolStatus, total_found:d.total_found});
+  });
+
+  es.addEventListener('subdomain_tool_update', e => {
+    const d = JSON.parse(e.data);
+    if (d.id !== subdomainToolScanId) return;
+    subdomainToolRows = d.subdomains || subdomainToolRows;
+    renderSubdomainToolRows(subdomainToolRows);
+    updateSubdomainToolProgress(d);
   });
 
   es.addEventListener('stats_update', e => {
@@ -2173,51 +2217,97 @@ async function openProject(pid) {
 
 function renderSubdomainToolRows(rows) {
   const body = document.getElementById('subdomain-tool-body');
+  document.getElementById('subdomain-tool-export-txt').disabled = !rows.length || !subdomainToolScanId;
+  document.getElementById('subdomain-tool-export-csv').disabled = !rows.length || !subdomainToolScanId;
   if (!rows.length) {
-    body.innerHTML = '<tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains found.</td></tr>';
+    body.innerHTML = '<tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains found yet.</td></tr>';
     return;
   }
   body.innerHTML = rows.map(host => `<tr><td style="font-family:var(--mono);font-size:12px">${esc(host)}</td></tr>`).join('');
+}
+
+function updateSubdomainToolProgress(state={}) {
+  subdomainToolStatus = state.status || subdomainToolStatus || 'idle';
+  const active = ['queued','running','paused','stopping'].includes(subdomainToolStatus);
+  document.getElementById('subdomain-tool-progress').style.display = (active || subdomainToolScanId) ? '' : 'none';
+  document.getElementById('subdomain-tool-status').textContent = `${(subdomainToolStatus || 'idle').toUpperCase()} · ${fmt(state.total_found || subdomainToolRows.length)} found`;
+  document.getElementById('subdomain-tool-detail').textContent = state.command || (state.domain ? `Enumerating ${state.domain}` : 'No active enumeration.');
+  const fill = document.getElementById('subdomain-tool-progress-fill');
+  fill.style.width = active ? '100%' : '0%';
+  fill.style.opacity = active ? '.7' : '1';
+  const pauseBtn = document.getElementById('subdomain-tool-pause-btn');
+  const stopBtn = document.getElementById('subdomain-tool-stop-btn');
+  pauseBtn.disabled = !['running','paused'].includes(subdomainToolStatus);
+  pauseBtn.textContent = subdomainToolStatus === 'paused' ? '▶ Resume' : '⏸ Pause';
+  stopBtn.disabled = !active || subdomainToolStatus === 'stopping';
+  document.getElementById('subdomain-tool-btn').disabled = active;
+  document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains.');
 }
 
 function initSubdomainToolPage() {
   document.getElementById('subdomain-tool-domain')?.focus();
 }
 
+async function pollSubdomainToolScan() {
+  if (!subdomainToolScanId) return;
+  try {
+    const { data } = await apiJSON(`/api/tools/subdomains/${subdomainToolScanId}`);
+    subdomainToolRows = data?.subdomains || [];
+    renderSubdomainToolRows(subdomainToolRows);
+    updateSubdomainToolProgress(data || {});
+    if (!['queued','running','paused','stopping'].includes(data?.status)) {
+      clearInterval(subdomainToolPollTimer);
+      subdomainToolPollTimer = null;
+      document.getElementById('subdomain-tool-btn').disabled = false;
+    }
+  } catch (e) { toast(e.message || 'Unable to load subdomain scan status', 'err'); }
+}
+
 async function runSubdomainEnumeration() {
   const input = document.getElementById('subdomain-tool-domain');
-  const btn = document.getElementById('subdomain-tool-btn');
-  const meta = document.getElementById('subdomain-tool-meta');
   const domain = (input.value || '').trim();
-  if (!domain) {
-    toast('Enter a domain to enumerate', 'err');
-    return;
-  }
-  btn.disabled = true;
-  meta.textContent = `Enumerating subdomains for ${domain}...`;
+  if (!domain) { toast('Enter a domain to enumerate', 'err'); return; }
+  if (subdomainToolPollTimer) clearInterval(subdomainToolPollTimer);
+  subdomainToolRows = [];
   renderSubdomainToolRows([]);
+  updateSubdomainToolProgress({status:'queued', domain, total_found:0});
   try {
-    const { ok, data, error } = await fetch('/api/tools/subdomains', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain }),
-    }).then(r => r.json());
-    if (!ok) {
-      meta.textContent = error || 'Subdomain enumeration failed.';
-      toast(error || 'Subdomain enumeration failed', 'err');
-      return;
-    }
-    subdomainToolRows = data?.subdomains || [];
-    const statusBits = [`Found: ${fmt(data?.total_found || 0)}`, `Status: ${data?.status || 'unknown'}`];
-    if (!data?.binary_available) statusBits.push('Subfinder binary not found');
-    meta.textContent = statusBits.join(' · ');
-    renderSubdomainToolRows(subdomainToolRows);
-  } catch {
-    meta.textContent = 'Subdomain enumeration failed.';
-    toast('Subdomain enumeration failed', 'err');
-  } finally {
-    btn.disabled = false;
+    const { data } = await apiJSON('/api/tools/subdomains', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }),
+    });
+    subdomainToolScanId = data.scan_id;
+    updateSubdomainToolProgress(data);
+    if (!data?.binary_available) toast('Subfinder binary not found on server', 'err');
+    subdomainToolPollTimer = setInterval(pollSubdomainToolScan, 1500);
+    await pollSubdomainToolScan();
+  } catch (e) {
+    updateSubdomainToolProgress({status:'error', error:e.message});
+    toast(e.message || 'Subdomain enumeration failed', 'err');
   }
+}
+
+async function toggleSubdomainToolPause() {
+  if (!subdomainToolScanId) return;
+  const route = subdomainToolStatus === 'paused' ? 'resume' : 'pause';
+  try {
+    const { data } = await apiJSON(`/api/tools/subdomains/${subdomainToolScanId}/${route}`, { method:'POST' });
+    updateSubdomainToolProgress(data);
+    toast(route === 'pause' ? 'Subdomain enumeration paused' : 'Subdomain enumeration resumed', 'ok');
+  } catch (e) { toast(e.message || 'Unable to update enumeration', 'err'); }
+}
+
+async function stopSubdomainToolScan() {
+  if (!subdomainToolScanId) return;
+  try {
+    const { data } = await apiJSON(`/api/tools/subdomains/${subdomainToolScanId}/stop`, { method:'POST' });
+    updateSubdomainToolProgress(data);
+    toast('Stopping subdomain enumeration…', 'ok');
+  } catch (e) { toast(e.message || 'Unable to stop enumeration', 'err'); }
+}
+
+function exportSubdomainTool(fmt) {
+  if (!subdomainToolScanId || !subdomainToolRows.length) return;
+  window.location.href = `/api/tools/subdomains/${subdomainToolScanId}/export.${fmt}`;
 }
 
 
