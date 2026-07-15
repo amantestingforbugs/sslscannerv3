@@ -2266,8 +2266,26 @@ function updateSubdomainToolProgress(state={}) {
   document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains.');
 }
 
-function initSubdomainToolPage() {
+async function initSubdomainToolPage() {
   document.getElementById('subdomain-tool-domain')?.focus();
+  if (subdomainToolRows.length || subdomainToolScanId) return;
+  try {
+    const { data } = await apiJSON('/api/tools/subdomains/latest');
+    if (!data) return;
+    subdomainToolScanId = data.id || data.scan_id;
+    subdomainToolRows = data.subdomains || [];
+    const input = document.getElementById('subdomain-tool-domain');
+    if (input && data.domain && !input.value) input.value = data.domain;
+    renderSubdomainToolRows(subdomainToolRows);
+    updateSubdomainToolProgress(data);
+    if (['queued','running','paused','stopping'].includes(data.status)) {
+      if (subdomainToolPollTimer) clearInterval(subdomainToolPollTimer);
+      subdomainToolPollTimer = setInterval(pollSubdomainToolScan, 1500);
+      await pollSubdomainToolScan();
+    }
+  } catch (e) {
+    toast(e.message || 'Unable to load saved subdomain enumeration', 'err');
+  }
 }
 
 async function pollSubdomainToolScan() {

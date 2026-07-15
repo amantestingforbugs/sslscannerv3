@@ -603,6 +603,8 @@ def toggle_subfinder(pid):
 def _subdomain_tool_public_state(sid: str) -> dict:
     with _subdomain_tool_lock:
         state = dict(_subdomain_tool_state.get(sid) or {})
+    if not state:
+        state = db.subdomain_tool_scan_get(sid) or {}
     if state:
         state.pop("process", None)
     return state
@@ -620,6 +622,7 @@ def _subdomain_tool_worker(sid: str):
             state = _subdomain_tool_state.get(sid)
             if state:
                 state.update({"status": "error", "error": "subfinder binary not found in PATH or /usr/local/bin/subfinder", "finished_at": db.now()})
+        db.subdomain_tool_scan_update(sid, status="error", error="subfinder binary not found in PATH or /usr/local/bin/subfinder", finished_at=db.now())
         broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
         return
 
@@ -634,6 +637,7 @@ def _subdomain_tool_worker(sid: str):
             state = _subdomain_tool_state.get(sid)
             if state:
                 state.update({"status": "running", "command": " ".join(cmd), "pid": proc.pid})
+        db.subdomain_tool_scan_update(sid, status="running", command=" ".join(cmd), pid=proc.pid)
         broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
 
         def _read_stderr():
@@ -658,6 +662,7 @@ def _subdomain_tool_worker(sid: str):
                     state["total_found"] = len(found)
                     state["updated_at"] = db.now()
                     status = state.get("status")
+                db.subdomain_tool_scan_update(sid, subdomains=sorted(found), total_found=len(found))
                 broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": status})
         proc.wait(timeout=2)
         stderr_thread.join(timeout=1)
@@ -668,13 +673,17 @@ def _subdomain_tool_worker(sid: str):
             current_status = state.get("status") if state else ""
             final_status = "stopped" if current_status == "stopping" or code in {-15, -9} else ("done" if code == 0 else "error")
             if state:
-                state.update({"status": final_status, "exit_code": code, "stderr": stderr_text or "", "finished_at": db.now(), "total_found": len(found), "subdomains": sorted(found)})
+                finished_at = db.now()
+                state.update({"status": final_status, "exit_code": code, "stderr": stderr_text or "", "finished_at": finished_at, "total_found": len(found), "subdomains": sorted(found)})
+                db.subdomain_tool_scan_update(sid, status=final_status, exit_code=code, stderr=stderr_text or "", finished_at=finished_at, total_found=len(found), subdomains=sorted(found))
     except Exception as e:
         with _subdomain_tool_lock:
             state = _subdomain_tool_state.get(sid)
             if state:
                 stderr_text = stderr_text or "".join(stderr_lines)
-                state.update({"status": "error", "error": str(e), "stderr": stderr_text or str(e), "finished_at": db.now(), "subdomains": sorted(found), "total_found": len(found)})
+                finished_at = db.now()
+                state.update({"status": "error", "error": str(e), "stderr": stderr_text or str(e), "finished_at": finished_at, "subdomains": sorted(found), "total_found": len(found)})
+                db.subdomain_tool_scan_update(sid, status="error", error=str(e), stderr=stderr_text or str(e), finished_at=finished_at, subdomains=sorted(found), total_found=len(found))
     finally:
         with _subdomain_tool_lock:
             _subdomain_tool_processes.pop(sid, None)
@@ -688,14 +697,23 @@ def enumerate_subdomains_tool():
     if not domain:
         return err("Enter a valid domain, for example example.com")
     sid = db.uid()
+    db.subdomain_tool_scan_create(sid, domain)
     with _subdomain_tool_lock:
-        _subdomain_tool_state[sid] = {"id": sid, "domain": domain, "status": "queued", "total_found": 0, "subdomains": [], "started_at": db.now(), "updated_at": db.now(), "finished_at": None, "exit_code": None, "stderr": ""}
+        _subdomain_tool_state[sid] = db.subdomain_tool_scan_get(sid)
     th = threading.Thread(target=_subdomain_tool_worker, args=(sid,), daemon=True, name=f"subdomain-tool-{sid[:8]}")
     with _subdomain_tool_lock:
         _subdomain_tool_threads[sid] = th
     th.start()
     from subfinder.runner import subfinder_available
     return ok({"scan_id": sid, "domain": domain, "status": "queued", "binary_available": subfinder_available()})
+
+
+@api.get("/tools/subdomains/latest")
+def subdomain_tool_latest():
+    state = db.subdomain_tool_scan_latest()
+    if not state:
+        return ok(None)
+    return ok(state)
 
 
 @api.get("/tools/subdomains/<sid>")
@@ -716,6 +734,7 @@ def pause_subdomain_tool(sid):
         os.kill(proc.pid, signal.SIGSTOP)
         state["status"] = "paused"
         state["updated_at"] = db.now()
+        db.subdomain_tool_scan_update(sid, status="paused")
     payload = _subdomain_tool_public_state(sid)
     broadcast("subdomain_tool_update", payload)
     return ok(payload)
@@ -731,6 +750,7 @@ def resume_subdomain_tool(sid):
         os.kill(proc.pid, signal.SIGCONT)
         state["status"] = "running"
         state["updated_at"] = db.now()
+        db.subdomain_tool_scan_update(sid, status="running")
     payload = _subdomain_tool_public_state(sid)
     broadcast("subdomain_tool_update", payload)
     return ok(payload)
@@ -746,6 +766,7 @@ def stop_subdomain_tool(sid):
         was_paused = state.get("status") == "paused"
         state["status"] = "stopping"
         state["updated_at"] = db.now()
+        db.subdomain_tool_scan_update(sid, status="stopping")
         if proc:
             if was_paused:
                 os.kill(proc.pid, signal.SIGCONT)

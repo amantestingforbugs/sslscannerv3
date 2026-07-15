@@ -156,6 +156,21 @@ def init_db():
         UNIQUE(job_id, hostname),
         FOREIGN KEY(job_id) REFERENCES subfinder_jobs(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS subdomain_tool_scans (
+        id TEXT PRIMARY KEY,
+        domain TEXT NOT NULL,
+        status TEXT DEFAULT 'queued',
+        command TEXT DEFAULT '',
+        pid INTEGER,
+        total_found INTEGER DEFAULT 0,
+        subdomains TEXT DEFAULT '[]',
+        exit_code INTEGER,
+        stderr TEXT DEFAULT '',
+        error TEXT DEFAULT '',
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_res_scan  ON results(scan_id);
     CREATE INDEX IF NOT EXISTS idx_res_proj  ON results(project_id);
     CREATE INDEX IF NOT EXISTS idx_res_mis   ON results(scan_id, is_mismatch);
@@ -171,6 +186,7 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_scans_triggered_by ON scans(triggered_by);
     CREATE INDEX IF NOT EXISTS idx_sfjobs_proj_started ON subfinder_jobs(project_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sfnew_proj_job_host ON subfinder_new_discoveries(project_id, job_id, hostname);
+    CREATE INDEX IF NOT EXISTS idx_subdomain_tool_started ON subdomain_tool_scans(started_at DESC);
     """)
     # Lightweight migrations for existing DBs
     try:
@@ -717,6 +733,53 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
         "page": page,
         "pages": max(1, (total + per_page - 1) // per_page),
     }
+
+
+# ── Standalone Subdomain Enumeration Tool ─────────────────────────────────────
+
+def subdomain_tool_scan_create(sid, domain):
+    n = now()
+    x(
+        "INSERT INTO subdomain_tool_scans(id,domain,status,total_found,subdomains,started_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (sid, domain, "queued", 0, "[]", n, n),
+    )
+    commit()
+
+
+def subdomain_tool_scan_update(sid, **kw):
+    allowed = {"status", "command", "pid", "total_found", "subdomains", "exit_code", "stderr", "error", "finished_at"}
+    data = {k: v for k, v in kw.items() if k in allowed}
+    if "subdomains" in data:
+        data["subdomains"] = json.dumps(sorted({h for h in data["subdomains"] if h}), separators=(",", ":"))
+    data["updated_at"] = now()
+    sets = ",".join(f"{k}=?" for k in data.keys())
+    x(f"UPDATE subdomain_tool_scans SET {sets} WHERE id=?", list(data.values()) + [sid])
+    commit()
+
+
+def _subdomain_tool_scan_row_to_dict(row):
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["subdomains"] = json.loads(d.get("subdomains") or "[]")
+    except Exception:
+        d["subdomains"] = []
+    d["scan_id"] = d["id"]
+    return d
+
+
+def subdomain_tool_scan_get(sid):
+    return _subdomain_tool_scan_row_to_dict(
+        x("SELECT * FROM subdomain_tool_scans WHERE id=?", (sid,)).fetchone()
+    )
+
+
+def subdomain_tool_scan_latest():
+    return _subdomain_tool_scan_row_to_dict(
+        x("SELECT * FROM subdomain_tool_scans ORDER BY started_at DESC LIMIT 1").fetchone()
+    )
 
 
 def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_at=None):
