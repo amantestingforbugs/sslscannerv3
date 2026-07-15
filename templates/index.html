@@ -1268,6 +1268,13 @@ tbody tr:last-child td{border-bottom:none}
                   <tbody id="subdomain-tool-body"><tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains enumerated yet. Click a completed scan to open its results.</td></tr></tbody>
                 </table>
               </div>
+              <div class="pagination" id="subdomain-tool-pagination" style="display:none">
+                <span id="subdomain-tool-pag-info">Page 1 of 1</span>
+                <div class="pagination-controls">
+                  <button class="btn btn-sm" id="subdomain-tool-pag-prev" onclick="changeSubdomainToolPage(-1)">Prev</button>
+                  <button class="btn btn-sm" id="subdomain-tool-pag-next" onclick="changeSubdomainToolPage(1)">Next</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1468,6 +1475,8 @@ let sfCurPid = null, sfCurPage = 1, sfTotalPages = 1;
 let allAlerts = [], alertsCurPage = 1, alertsTotalPages = 1;
 let projectsCache = [];
 let subdomainToolRows = [];
+let subdomainToolPage = 1;
+let subdomainToolPerPage = 100;
 let subdomainToolScanId = null;
 let subdomainToolStatus = "idle";
 let subdomainToolPollTimer = null;
@@ -2301,6 +2310,7 @@ async function openSubdomainToolScan(scanId) {
     const { data } = await apiJSON(`/api/tools/subdomains/${scanId}`);
     subdomainToolScanId = data.id || data.scan_id;
     subdomainToolRows = data.subdomains || [];
+    subdomainToolPage = 1;
     const input = document.getElementById('subdomain-tool-domain');
     if (input && data.domain) input.value = data.domain;
     renderSubdomainToolRows(subdomainToolRows);
@@ -2314,13 +2324,34 @@ async function openSubdomainToolScan(scanId) {
 
 function renderSubdomainToolRows(rows) {
   const body = document.getElementById('subdomain-tool-body');
-  document.getElementById('subdomain-tool-export-txt').disabled = !rows.length || !subdomainToolScanId;
-  document.getElementById('subdomain-tool-export-csv').disabled = !rows.length || !subdomainToolScanId;
-  if (!rows.length) {
+  const pagination = document.getElementById('subdomain-tool-pagination');
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / subdomainToolPerPage));
+  subdomainToolPage = Math.min(Math.max(1, subdomainToolPage), totalPages);
+  document.getElementById('subdomain-tool-export-txt').disabled = !total || !subdomainToolScanId;
+  document.getElementById('subdomain-tool-export-csv').disabled = !total || !subdomainToolScanId;
+  if (!total) {
     body.innerHTML = '<tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains found yet.</td></tr>';
+    if (pagination) pagination.style.display = 'none';
     return;
   }
-  body.innerHTML = rows.map(host => `<tr><td style="font-family:var(--mono);font-size:12px">${esc(host)}</td></tr>`).join('');
+  const start = (subdomainToolPage - 1) * subdomainToolPerPage;
+  const pageRows = rows.slice(start, start + subdomainToolPerPage);
+  body.innerHTML = pageRows.map(host => `<tr><td style="font-family:var(--mono);font-size:12px">${esc(host)}</td></tr>`).join('');
+  if (pagination) {
+    pagination.style.display = totalPages > 1 ? '' : 'none';
+    document.getElementById('subdomain-tool-pag-info').textContent = `Page ${subdomainToolPage} of ${totalPages} (${fmt(total)} total)`;
+    document.getElementById('subdomain-tool-pag-prev').disabled = subdomainToolPage <= 1;
+    document.getElementById('subdomain-tool-pag-next').disabled = subdomainToolPage >= totalPages;
+  }
+}
+
+function changeSubdomainToolPage(delta) {
+  const totalPages = Math.max(1, Math.ceil(subdomainToolRows.length / subdomainToolPerPage));
+  const nextPage = Math.min(Math.max(1, subdomainToolPage + delta), totalPages);
+  if (nextPage === subdomainToolPage) return;
+  subdomainToolPage = nextPage;
+  renderSubdomainToolRows(subdomainToolRows);
 }
 
 function updateSubdomainToolProgress(state={}) {
@@ -2350,6 +2381,7 @@ async function initSubdomainToolPage() {
     if (!data) return;
     subdomainToolScanId = data.id || data.scan_id;
     subdomainToolRows = data.subdomains || [];
+    subdomainToolPage = 1;
     const input = document.getElementById('subdomain-tool-domain');
     if (input && data.domain && !input.value) input.value = data.domain;
     renderSubdomainToolRows(subdomainToolRows);
@@ -2388,6 +2420,7 @@ async function runSubdomainEnumeration() {
   if (!domain) { toast('Enter a domain to enumerate', 'err'); return; }
   if (subdomainToolPollTimer) clearInterval(subdomainToolPollTimer);
   subdomainToolRows = [];
+  subdomainToolPage = 1;
   renderSubdomainToolRows([]);
   updateSubdomainToolProgress({status:'queued', domain, total_found:0});
   try {
