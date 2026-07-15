@@ -857,10 +857,6 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/><path d="M5 5v14"/></svg>
       <span>Latest Discovery Batch</span>
     </button>
-    <button class="nav-item" data-page="subfinder-raw">
-      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-      <span>Subfinder Raw Results</span>
-    </button>
     </div>
     <div class="nav-group">
       <div class="nav-section">Tools</div>
@@ -1429,27 +1425,6 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
       </div>
     </div>
 
-    <div class="page" id="page-subfinder-raw">
-      <div class="page-header">
-        <div>
-          <div class="page-title">Subfinder Raw Results</div>
-          <div class="page-sub">Full raw Subfinder output by root domain and run timestamp.</div>
-        </div>
-      </div>
-      <div class="form-group" style="max-width:320px;margin-bottom:14px">
-        <label class="form-label">Project</label>
-        <select class="form-input" id="sf-raw-project-select" onchange="loadSfRawPage()"><option value="">— Choose a project —</option></select>
-      </div>
-      <div class="card">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Domain Scanned</th><th>Timestamp</th><th>Total Found</th><th>Status</th><th>Raw Output</th></tr></thead>
-            <tbody id="sf-raw-page-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <div class="page" id="page-subdomain-tool">
       <div class="page-header">
         <div>
@@ -1594,15 +1569,6 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
           <div id="sf-jobs"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div></div>
         </div>
 
-        <div class="card">
-          <div class="card-header"><span class="card-title">Subfinder Raw Results</span></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Domain Scanned</th><th>Timestamp</th><th>Total Found</th><th>Status</th><th>Raw Output</th></tr></thead>
-              <tbody id="sf-raw-body"></tbody>
-            </table>
-          </div>
-        </div>
 
         <div class="card">
           <div class="card-header">
@@ -2089,7 +2055,7 @@ setInterval(tick,1000); tick();
 // ════════════════════════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
-  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subfinder-raw':'Subfinder Raw Results', 'subdomain-tool':'Subdomain Enumeration', logs:'Logs', settings:'Settings'
+  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subdomain-tool':'Subdomain Enumeration', logs:'Logs', settings:'Settings'
 };
 
 function routeForPage(name) {
@@ -2131,7 +2097,6 @@ function nav(name, opts = {}) {
   if (name==='subfinder') initSfPage();
   if (name==='discoveries') initDiscoveriesPage();
   if (name==='discoveries-latest') initLatestDiscoveriesPage();
-  if (name==='subfinder-raw') initSfRawPage();
   if (name==='subdomain-tool') initSubdomainToolPage();
   if (name==='logs') loadLogsPage();
   if (!opts.skipRoute) persistRoute(name, opts);
@@ -3417,10 +3382,9 @@ async function loadSfProject() {
 async function refreshSfPanel() {
   if (!sfCurPid) return;
   try {
-    const [{ data: st }, { data: hostsData }, { data: rawRuns }, { data: proj }] = await Promise.all([
+    const [{ data: st }, { data: hostsData }, { data: proj }] = await Promise.all([
       apiJSON(`/api/projects/${sfCurPid}/subfinder/status`),
       apiJSON(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=250`),
-      apiJSON(`/api/projects/${sfCurPid}/subfinder/raw-results?limit=20&preview_chars=3500`),
       apiJSON(`/api/projects/${sfCurPid}`),
     ]);
 
@@ -3444,20 +3408,6 @@ async function refreshSfPanel() {
         <td style="color:var(--green);font-weight:600">${fmt(j.new_count)}</td>
         <td>${fmt(j.total_found)}</td></tr>`).join('')+'</tbody></table></div>':
       '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div>';
-
-    // Raw results table
-    document.getElementById('sf-raw-body').innerHTML = (rawRuns||[]).length ? (rawRuns||[]).map(rr => {
-      const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_preview || rr.stderr_text || '—');
-      return `<tr>
-        <td style="font-family:var(--mono);font-size:12px">${esc(rr.root_domain)}</td>
-        <td style="font-size:12px;color:var(--text-secondary)">${new Date(rr.started_at).toLocaleString()}</td>
-        <td style="font-weight:600">${fmt(rr.total_found||0)}</td>
-        <td><span class="badge ${rr.status==='done'?'badge-done':rr.status==='running'?'badge-running':'badge-error'}">${esc(rr.status||'unknown')}</span></td>
-        <td style="max-width:520px">
-          <pre style="white-space:pre-wrap;overflow:auto;max-height:140px;font-size:11px;background:var(--bg-raised);padding:8px;border:1px solid var(--border);border-radius:8px">${esc(rawList)}</pre>
-        </td>
-      </tr>`;
-    }).join('') : '<tr><td colspan="5" style="text-align:center;padding:18px;color:var(--text-muted)">No raw subfinder runs yet.</td></tr>';
 
     // Stats
     document.getElementById('sf-total').textContent = fmt(hostsData?.total||0);
@@ -3534,32 +3484,6 @@ async function initLatestDiscoveriesPage() {
   loadLatestDiscoveries();
 }
 
-async function initSfRawPage() {
-  const sel = document.getElementById('sf-raw-project-select');
-  const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
-  sel.innerHTML='<option value="">— Choose a project —</option>'+
-    (projs||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
-}
-
-async function loadSfRawPage() {
-  const pid = document.getElementById('sf-raw-project-select').value;
-  const body = document.getElementById('sf-raw-page-body');
-  if (!pid) {
-    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:18px;color:var(--text-muted)">Select a project.</td></tr>';
-    return;
-  }
-  const { data: rawRuns } = await fetch(`/api/projects/${pid}/subfinder/raw-results?limit=100&preview_chars=0`).then(r=>r.json());
-  body.innerHTML = (rawRuns||[]).length ? (rawRuns||[]).map(rr => {
-    const rawList = (rr.raw_lines||[]).join('\n') || (rr.stderr_preview || rr.stderr_text || '—');
-    return `<tr>
-      <td style="font-family:var(--mono);font-size:12px">${esc(rr.root_domain)}</td>
-      <td style="font-size:12px;color:var(--text-secondary)">${new Date(rr.started_at).toLocaleString()}</td>
-      <td style="font-weight:600">${fmt(rr.total_found||0)}</td>
-      <td><span class="badge ${rr.status==='done'?'badge-done':rr.status==='running'?'badge-running':'badge-error'}">${esc(rr.status||'unknown')}</span></td>
-      <td style="max-width:520px"><pre style="white-space:pre-wrap;overflow:auto;max-height:220px;font-size:11px;background:var(--bg-raised);padding:8px;border:1px solid var(--border);border-radius:8px">${esc(rawList)}</pre></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="5" style="text-align:center;padding:18px;color:var(--text-muted)">No raw subfinder runs yet.</td></tr>';
-}
 
 function renderTopProjectMenu() {
   const sel = document.getElementById('topProjectSelect');
