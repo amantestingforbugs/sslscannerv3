@@ -14,7 +14,8 @@
   --radius: 18px;
   --radius-sm: 10px;
   --radius-lg: 26px;
-  --transition: 0.18s ease;
+  --transition: 0.18s cubic-bezier(.2,.8,.2,1);
+  --transition-fast: 0.12s cubic-bezier(.2,.8,.2,1);
   --font: 'Inter', system-ui, sans-serif;
   --mono: 'JetBrains Mono', monospace;
   --sidebar-w: 230px;
@@ -77,7 +78,7 @@
    RESET & BASE
 ════════════════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;overflow:hidden}
+html,body{height:100%;overflow:hidden;-webkit-text-size-adjust:100%}
 body{background:var(--bg-base);color:var(--text-primary);font-family:var(--font);font-size:13.5px;line-height:1.5;transition:background var(--transition),color var(--transition);background-image:radial-gradient(circle at 35% -10%, rgba(79,70,229,.20), transparent 34%),radial-gradient(circle at 90% 12%, rgba(6,182,212,.12), transparent 30%)}
 a{text-decoration:none;color:inherit}
 button{cursor:pointer;font-family:inherit}
@@ -232,12 +233,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .app.sidebar-hidden .sidebar-footer{margin:8px;padding:12px;align-items:center}
 
 /* ── CONTENT ── */
-.content{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth;position:relative;z-index:1}
+.content{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth;position:relative;z-index:1;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;content-visibility:auto;contain-intrinsic-size:900px}
 
 /* ════════════════════════════════════════════════════════════
    PAGES
 ════════════════════════════════════════════════════════════ */
-.page{display:none}.page.active{display:block}
+.page{display:none}.page.active{display:block;animation:page-in var(--transition-fast)}
+@keyframes page-in{from{opacity:.001;transform:translateY(4px)}to{opacity:1;transform:none}}
 
 .page-header{
   display:flex;align-items:center;justify-content:space-between;
@@ -252,6 +254,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
 
 .stat-card{
+  content-visibility:auto;contain-intrinsic-size:160px;
   background:linear-gradient(180deg,color-mix(in srgb,var(--bg-surface) 94%,white 6%),var(--bg-surface));border:1px solid color-mix(in srgb,var(--border) 76%,transparent);
   border-radius:var(--radius);padding:18px;
   position:relative;overflow:hidden;isolation:isolate;
@@ -395,7 +398,7 @@ body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{an
 /* ════════════════════════════════════════════════════════════
    TABLE
 ════════════════════════════════════════════════════════════ */
-.table-wrap{overflow-x:auto}
+.table-wrap{overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 table{width:100%;border-collapse:collapse}
 thead th{
   text-align:left;padding:10px 14px;
@@ -685,30 +688,43 @@ tbody tr:last-child td{border-bottom:none}
   .nav-item.active::before{left:10px;right:10px;top:auto;bottom:5px;width:auto;height:3px}
   .main{height:calc(100dvh - 74px)}
   .app.sidebar-hidden .main{height:calc(100dvh - 74px)}
-  .topbar{height:auto;min-height:96px;padding:12px;align-items:flex-start;gap:12px;flex-wrap:wrap}
+  .topbar{height:auto;min-height:86px;padding:10px 12px;align-items:flex-start;gap:10px;flex-wrap:wrap}
   .topbar-heading{width:100%}
   .topbar-title{font-size:18px}
   .topbar-subtitle{max-width:calc(100vw - 96px)}
   .topbar-right{width:100%;margin-left:0;display:grid;grid-template-columns:1fr auto auto;gap:8px;padding:7px;border-radius:16px}
   .project-switcher{min-width:0;width:100%}
   .alert-pill{grid-column:1/-1;justify-content:center}
-  .content{padding:12px;overscroll-behavior:contain}
+  .content{padding:12px;overscroll-behavior:contain;scroll-padding-bottom:18px}
   .page-header{align-items:flex-start;gap:12px;flex-direction:column;margin-bottom:16px}
   .page-header>div:last-child,.card-actions,.modal-footer{flex-wrap:wrap}
-  .stats-row,.projects-grid,.integrations-grid,.rules-grid{grid-template-columns:1fr}
+  .stats-row,.projects-grid,.integrations-grid,.rules-grid{grid-template-columns:1fr;gap:10px}
   .form-row{flex-direction:column;align-items:stretch}
   .table-toolbar,.pagination{align-items:stretch;flex-direction:column}
   .search-input input{width:100%}
   .scan-live-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
   #page-detail > div[style*="grid-template-columns"]{grid-template-columns:1fr!important}
   .modal-overlay{align-items:flex-end;padding:10px}
-  .modal{max-height:calc(100dvh - 24px);overflow:auto}
+  .modal{max-height:calc(100dvh - 24px);overflow:auto;-webkit-overflow-scrolling:touch}
   .toasts{left:12px;right:12px;bottom:12px}
   .toast{min-width:0;max-width:none;width:100%}
 }
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
+}
+
+
+/* Performance and responsiveness helpers */
+.card,.project-card,.modal,.dashboard-hero,.quick-actions-shell,.action-tile{content-visibility:auto;contain-intrinsic-size:260px}
+.nav-item,.btn,.btn-icon,.sidebar-toggle,.theme-toggle,.action-tile,.project-card,.stat-card{will-change:transform}
+tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
+@media(max-width:520px){
+  .topbar-mark{width:40px;height:40px;border-radius:14px}
+  .topbar-subtitle,.topbar-eyebrow{display:none}
+  .project-switcher-btn{height:40px}
+  .btn,.btn-sm{width:100%;justify-content:center}
+  .action-tile{min-height:112px;padding:14px}
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1713,6 +1729,7 @@ let subdomainToolScanId = null;
 let subdomainToolStatus = "idle";
 let subdomainToolPollTimer = null;
 let subdomainToolHistory = [];
+let subdomainToolRenderTimer = null;
 let quickScanId = null;
 let quickRows = [];
 let quickRowsByHost = new Map();
@@ -1740,6 +1757,16 @@ function debounce(fn, wait=250) {
     t = setTimeout(() => fn(...args), wait);
   };
 }
+
+function scheduleFrame(fn) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fn);
+  else setTimeout(fn, 0);
+}
+
+const passiveEvents = ['touchstart','touchmove','wheel'];
+passiveEvents.forEach(type => {
+  document.addEventListener(type, () => {}, { passive: true });
+});
 
 
 function inferCellSortValue(cell) {
@@ -2087,12 +2114,16 @@ function persistRoute(name, opts = {}) {
 }
 
 function nav(name, opts = {}) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const current = document.querySelector('.page.active');
+  const isSamePage = current?.id === 'page-'+name;
+  if (!isSamePage) {
+    document.querySelectorAll('.page.active').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item.active').forEach(n => n.classList.remove('active'));
+  }
   const pg = document.getElementById('page-'+name);
-  if (pg) pg.classList.add('active');
+  if (pg && !isSamePage) pg.classList.add('active');
   const ni = document.querySelector(`[data-page="${name}"]`);
-  if (ni) ni.classList.add('active');
+  if (ni && !isSamePage) ni.classList.add('active');
   document.getElementById('topTitle').textContent = PAGE_TITLES[name] || name;
   if (name==='dashboard') loadDash();
   if (name==='projects') loadProjects();
@@ -2205,7 +2236,7 @@ function connectSSE() {
     }
     // Refresh dashboard active scans section
     if (document.getElementById('page-dashboard').classList.contains('active')) {
-      refreshActiveScans();
+      scheduleActiveScansRefresh();
     }
   });
 
@@ -2217,7 +2248,7 @@ function connectSSE() {
     if (d.subdomain && !subdomainToolRows.includes(d.subdomain)) {
       subdomainToolRows.push(d.subdomain);
       subdomainToolRows.sort();
-      renderSubdomainToolRows(subdomainToolRows);
+      scheduleSubdomainToolRender();
     }
     updateSubdomainToolProgress({status:d.status || subdomainToolStatus, total_found:d.total_found});
   });
@@ -2227,7 +2258,7 @@ function connectSSE() {
     upsertSubdomainToolHistory(d);
     if (d.id !== subdomainToolScanId) return;
     subdomainToolRows = d.subdomains || subdomainToolRows;
-    renderSubdomainToolRows(subdomainToolRows);
+    scheduleSubdomainToolRender();
     updateSubdomainToolProgress(d);
     if (!['queued','running','paused','stopping'].includes(d.status)) loadSubdomainToolHistory();
   });
@@ -2393,11 +2424,15 @@ async function loadLogsPage() {
   }
 }
 
+const scheduleLogsRefresh = debounce(() => loadLogs(), 800);
 function appendLogRow(entry) {
-  if (!entry || !document.getElementById('page-dashboard').classList.contains('active')) return;
-  loadLogs();
+  const dashActive = document.getElementById('page-dashboard')?.classList.contains('active');
+  const logsActive = document.getElementById('page-logs')?.classList.contains('active');
+  if (!entry || (!dashActive && !logsActive)) return;
+  scheduleLogsRefresh();
 }
 
+const scheduleActiveScansRefresh = debounce(() => refreshActiveScans(), 500);
 async function refreshActiveScans() {
   try {
     const { data: scans } = await fetch('/api/active-scans').then(r => r.json());
@@ -2475,8 +2510,8 @@ function scheduleQuickRender() {
   if (quickRenderTimer) return;
   quickRenderTimer = setTimeout(() => {
     quickRenderTimer = null;
-    renderQuickRows();
-  }, 180);
+    scheduleFrame(renderQuickRows);
+  }, 120);
 }
 
 function getQuickRowsView() {
@@ -2792,6 +2827,14 @@ async function openSubdomainToolScan(scanId) {
   } catch (e) {
     toast(e.message || 'Unable to open subdomain scan results', 'err');
   }
+}
+
+function scheduleSubdomainToolRender() {
+  if (subdomainToolRenderTimer) return;
+  subdomainToolRenderTimer = setTimeout(() => {
+    subdomainToolRenderTimer = null;
+    scheduleFrame(() => renderSubdomainToolRows(subdomainToolRows));
+  }, 120);
 }
 
 function renderSubdomainToolRows(rows) {
