@@ -80,3 +80,32 @@ def test_subfinder_scheduler_does_not_mark_due_project_run_when_capacity_full(mo
     scheduler._tick()
 
     assert "due-project" not in scheduler._last_run
+
+
+def test_candidate_hosts_from_text_extracts_in_scope_hosts_only():
+    import subfinder.runner as runner
+
+    text = "api.example.com https://dev.example.com:443 badexample.com *.cdn.example.com other.test"
+
+    assert runner._candidate_hosts_from_text(text, "example.com") == {
+        "api.example.com",
+        "dev.example.com",
+        "cdn.example.com",
+    }
+
+
+def test_enumerate_passive_subdomains_deduplicates_sources(monkeypatch):
+    import subfinder.runner as runner
+
+    responses = {
+        "crt.sh": ('application/json', '[{"name_value":"api.example.com\\n*.cdn.example.com"}]'),
+        "HackerTarget": ('text/plain', 'mail.example.com,1.2.3.4\n'),
+    }
+    monkeypatch.setattr(runner, "_passive_source_urls", lambda domain: {k: f"https://unit.test/{k}" for k in responses})
+    monkeypatch.setattr(runner, "_fetch_passive_url", lambda url, timeout: responses[url.rsplit('/', 1)[-1]])
+
+    result = runner.enumerate_passive_subdomains("example.com")
+
+    assert result["found"] == ["api.example.com", "cdn.example.com", "mail.example.com"]
+    assert result["sources"]["crt.sh"] == ["api.example.com", "cdn.example.com"]
+    assert result["errors"] == {}
