@@ -3365,7 +3365,7 @@ async function clearAlerts() {
 async function initSfPage() {
   const sel = document.getElementById('sf-project-select');
   const projs = projectsCache.length ? projectsCache : (await apiJSON('/api/projects')).data || [];
-  sel.innerHTML='<option value="">— Choose a project —</option>'+
+  sel.innerHTML='<option value="">— Choose a project —</option><option value="__all__">All projects with root domains</option>'+
     (projs||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
 
   // Check binary
@@ -3380,12 +3380,23 @@ async function loadSfProject() {
   sfCurPid = pid;
   if (!pid) { document.getElementById('sf-project-panel').style.display='none'; return; }
   document.getElementById('sf-project-panel').style.display='';
+  if (pid === '__all__') {
+    document.getElementById('sf-status-bar').textContent = 'Status: ready to enumerate root domains from every project host list';
+    document.getElementById('sf-total').textContent = 'All';
+    document.getElementById('sf-new').textContent = '—';
+    document.getElementById('sf-jobs').innerHTML = '<div class="empty"><div class="empty-title">Select an individual project to view its jobs.</div></div>';
+    document.getElementById('sf-hosts-body').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">Select an individual project to view discovered hosts.</td></tr>';
+    document.getElementById('sf-pagination').style.display='none';
+    document.getElementById('sf-toggle-label').onclick = null;
+    document.getElementById('sf-toggle').className = 'toggle-switch';
+    return;
+  }
   sfCurPage=1; sfTotalPages=1;
   refreshSfPanel();
 }
 
 async function refreshSfPanel() {
-  if (!sfCurPid) return;
+  if (!sfCurPid || sfCurPid === '__all__') return;
   try {
     const [{ data: st }, { data: hostsData }, { data: proj }] = await Promise.all([
       apiJSON(`/api/projects/${sfCurPid}/subfinder/status`),
@@ -3444,9 +3455,10 @@ async function refreshSfPanel() {
 
 async function runSfNow() {
   if (!sfCurPid) { toast('Please select a project before running scan','err'); return; }
-  const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
+  const url = sfCurPid === '__all__' ? '/api/subfinder/run-all' : `/api/projects/${sfCurPid}/subfinder/run`;
+  const { ok, data, error } = await fetch(url,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
-  toast(data?.binary_found ? 'Subfinder started' : 'Subfinder started (binary not found — check install)','ok');
+  toast(data?.projects_started ? `Subfinder started for ${fmt(data.projects_started)} projects` : (data?.binary_found ? 'Subfinder started' : 'Subfinder started (binary not found — check install)'),'ok');
   setTimeout(refreshSfPanel, 2000);
 }
 
