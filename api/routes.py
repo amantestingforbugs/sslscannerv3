@@ -755,7 +755,14 @@ def merge_subdomain_tool_results():
         exit_code=0,
         finished_at=finished_at,
     )
+    domain_scan_ids = db.subdomain_tool_scan_ids_for_domain(domain)
+    db.subdomain_tool_scans_delete_for_domain(domain, exclude_ids=(sid,))
     with _subdomain_tool_lock:
+        for old_sid in domain_scan_ids:
+            if old_sid and old_sid != sid:
+                _subdomain_tool_state.pop(old_sid, None)
+                _subdomain_tool_threads.pop(old_sid, None)
+                _subdomain_tool_processes.pop(old_sid, None)
         _subdomain_tool_state[sid] = db.subdomain_tool_scan_get(sid)
     payload = _subdomain_tool_public_state(sid)
     payload["merged_from"] = {
@@ -789,6 +796,22 @@ def subdomain_tool_status(sid):
     if not state:
         return err("Subdomain enumeration scan not found", 404)
     return ok(state)
+
+
+@api.delete("/tools/subdomains/<sid>")
+def delete_subdomain_tool_scan(sid):
+    state = _subdomain_tool_public_state(sid)
+    if not state:
+        return err("Subdomain enumeration scan not found", 404)
+    if state.get("status") in ACTIVE_SUBDOMAIN_TOOL_STATUSES:
+        return err("Stop the subdomain enumeration scan before deleting it", 409)
+    with _subdomain_tool_lock:
+        _subdomain_tool_state.pop(sid, None)
+        _subdomain_tool_threads.pop(sid, None)
+        _subdomain_tool_processes.pop(sid, None)
+    db.subdomain_tool_scan_delete(sid)
+    broadcast("subdomain_tool_deleted", {"id": sid, "scan_id": sid})
+    return ok({"id": sid, "scan_id": sid})
 
 
 @api.post("/tools/subdomains/<sid>/pause")
