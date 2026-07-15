@@ -94,6 +94,21 @@ def test_candidate_hosts_from_text_extracts_in_scope_hosts_only():
     }
 
 
+def test_default_passive_providers_exclude_removed_or_duplicate_public_sources():
+    import subfinder.runner as runner
+
+    names = {provider.name for provider in runner._all_enumeration_providers()}
+
+    assert "Google Certificate Transparency" not in names
+    assert "Facebook Certificate Transparency" not in names
+    assert "ThreatCrowd" not in names
+    assert "Cloudflare Nimbus CT Logs" not in names
+    assert "Sectigo CT Logs" not in names
+    assert "DigiCert CT Logs" not in names
+    assert "Let's Encrypt CT Logs" not in names
+    assert "crt.sh" in names
+    assert "Cert Spotter" in names
+
 def test_enumerate_passive_subdomains_deduplicates_sources(monkeypatch):
     import subfinder.runner as runner
 

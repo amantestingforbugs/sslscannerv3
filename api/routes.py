@@ -666,8 +666,9 @@ def _subdomain_tool_worker(sid: str):
                 found.add(host)
                 db.subdomain_tool_scan_update(sid, subdomains=sorted(found), total_found=len(found))
                 broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": "running"})
-        if passive.get("errors"):
-            stderr_lines.append("Passive source errors: " + json.dumps(passive.get("errors"), separators=(",", ":")))
+        # Passive provider failures are non-fatal. Keep the scan UI focused on
+        # discovered results instead of showing transient public-source errors
+        # (rate limits, removed endpoints, or source timeouts) as scan stderr.
         stderr_text = "".join(stderr_lines)
         code = proc.returncode if proc else 0
         with _subdomain_tool_lock:

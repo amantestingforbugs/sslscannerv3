@@ -190,20 +190,16 @@ def _bearer_header(env_name: str) -> Callable[[], Dict[str, str]]:
 
 def _all_enumeration_providers() -> List[EnumerationProvider]:
     providers = [
+        # Use maintained public CT search APIs only. Several historical entries
+        # (Google/Facebook CT search and log-operator names backed by crt.sh) are
+        # no longer public query APIs or were duplicate aliases that produced
+        # noisy 400/404 errors in the UI without adding unique coverage.
         EnumerationProvider("crt.sh", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
-        EnumerationProvider("Google Certificate Transparency", "Certificate Transparency", _google_ct_fetcher),
         EnumerationProvider("Cert Spotter", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
-        EnumerationProvider("SSLMate CT Search", "Certificate Transparency", _json_or_text_url_fetcher("https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names")),
-        EnumerationProvider("Facebook Certificate Transparency", "Certificate Transparency", _json_or_text_url_fetcher("https://graph.facebook.com/certificates?query={domain}")),
-        EnumerationProvider("DigiCert CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
-        EnumerationProvider("Sectigo CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
-        EnumerationProvider("Let\'s Encrypt CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
-        EnumerationProvider("Cloudflare Nimbus CT Logs", "Certificate Transparency", _json_or_text_url_fetcher("https://crt.sh/?q=%25.{domain}&output=json")),
         EnumerationProvider("HackerTarget", "Passive DNS", _json_or_text_url_fetcher("https://api.hackertarget.com/hostsearch/?q={domain}")),
         EnumerationProvider("RapidDNS", "Passive DNS", _json_or_text_url_fetcher("https://rapiddns.io/subdomain/{domain}?full=1")),
         EnumerationProvider("AlienVault OTX", "Threat Intelligence", _json_or_text_url_fetcher("https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns")),
         EnumerationProvider("urlscan.io", "Threat Intelligence", _json_or_text_url_fetcher("https://urlscan.io/api/v1/search/?q=domain:{domain}")),
-        EnumerationProvider("ThreatCrowd", "Threat Intelligence", _json_or_text_url_fetcher("https://www.threatcrowd.org/searchApi/v2/domain/report/?domain={domain}")),
         EnumerationProvider("Wayback Machine", "Web Archives", _json_or_text_url_fetcher("https://web.archive.org/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey")),
         EnumerationProvider("Common Crawl", "Web Archives", _json_or_text_url_fetcher("https://index.commoncrawl.org/CC-MAIN-2024-10-index?url=*.{domain}/*&output=json")),
         EnumerationProvider("DNS Enumeration", "DNS Enumeration", _dns_record_fetcher),
@@ -392,8 +388,10 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
         passive_summary = json.dumps({"sources": passive.get("sources", {}), "errors": passive.get("errors", {})}, separators=(",", ":"))
         stdout = "\n".join(filter(None, [subfinder_stdout, passive_summary]))
         stderr = subfinder_stderr
-        if passive.get("errors"):
-            stderr = "\n".join(filter(None, [stderr, "Passive source errors: " + json.dumps(passive.get("errors"), separators=(",", ":"))]))
+        # Passive provider failures are non-fatal and are already included in
+        # the machine-readable stdout summary. Do not surface transient public
+        # source failures as scan stderr because that makes successful scans look
+        # broken in the UI.
         log.info("Subdomain enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
         return {
             "root_domain": root_domain,
