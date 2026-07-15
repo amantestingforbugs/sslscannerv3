@@ -745,6 +745,22 @@ tbody tr:last-child td{border-bottom:none}
   padding:12px 14px;
   border:1px solid var(--border);
 }
+
+/* Modern SaaS experience upgrades */
+.content::before{content:'';position:fixed;right:2%;top:110px;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle,rgba(6,182,212,.12),transparent 68%);filter:blur(12px);pointer-events:none;z-index:-1}
+.command-button{min-width:230px;height:38px;border:1px solid color-mix(in srgb,var(--border) 84%,transparent);border-radius:13px;background:color-mix(in srgb,var(--bg-raised) 82%,transparent);color:var(--text-secondary);display:flex;align-items:center;gap:9px;padding:0 11px;font-size:12px;font-weight:700;box-shadow:inset 0 1px 0 rgba(255,255,255,.08);transition:all var(--transition)}
+.command-button:hover{color:var(--text-primary);border-color:color-mix(in srgb,var(--accent) 44%,var(--border));transform:translateY(-1px)}
+.command-kbd{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-muted);border:1px solid var(--border);border-radius:7px;padding:2px 6px;background:var(--bg-base)}
+.dashboard-hero{animation:heroFloat 8s ease-in-out infinite}
+@keyframes heroFloat{0%,100%{background-position:0 0,0 0,0 0,0 0}50%{background-position:0 0,18px -10px,-16px 12px,0 0}}
+.stat-card,.insight-card,.action-tile,.timeline-panel{box-shadow:0 18px 46px rgba(0,0,0,.10),inset 0 1px 0 rgba(255,255,255,.05)}
+.stat-card{min-height:134px}.stat-card .stat-label{font-weight:750;text-transform:uppercase;letter-spacing:.06em}.stat-card .stat-trend{display:flex;align-items:center;gap:6px}.stat-card .stat-trend::before{content:'';width:6px;height:6px;border-radius:999px;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 14%,transparent)}
+.action-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}.action-tile{border:1px solid var(--border);border-radius:18px;background:linear-gradient(180deg,var(--bg-surface),var(--bg-raised));padding:15px;text-align:left;display:flex;gap:12px;align-items:flex-start;transition:transform var(--transition),border-color var(--transition),box-shadow var(--transition)}.action-tile:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 44%,var(--border));box-shadow:0 22px 56px rgba(79,70,229,.16)}.action-icon{width:38px;height:38px;border-radius:14px;display:grid;place-items:center;background:var(--accent-dim);color:var(--accent);font-size:18px;flex-shrink:0}.action-title{font-weight:850;color:var(--text-primary);margin-bottom:3px}.action-copy{font-size:12px;color:var(--text-secondary);line-height:1.45}
+.timeline-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-surface);overflow:hidden}.timeline-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--bg-raised),var(--bg-surface))}.timeline-list{padding:8px 16px 16px}.timeline-item{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border-subtle)}.timeline-item:last-child{border-bottom:0}.timeline-dot{width:10px;height:10px;margin-top:4px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 5px var(--accent-dim)}.timeline-title{font-weight:800;font-size:12.5px}.timeline-meta{font-size:11px;color:var(--text-muted);margin-top:2px}.timeline-chip{font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);border:1px solid var(--border);border-radius:999px;padding:4px 7px}
+.command-overlay{position:fixed;inset:0;background:rgba(2,6,23,.58);backdrop-filter:blur(10px);z-index:1200;display:none;align-items:flex-start;justify-content:center;padding:10vh 16px}.command-overlay.open{display:flex}.command-panel{width:min(640px,100%);border:1px solid color-mix(in srgb,var(--border) 80%,transparent);border-radius:24px;background:color-mix(in srgb,var(--bg-surface) 94%,transparent);box-shadow:var(--shadow);overflow:hidden}.command-search{width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text-primary);padding:18px 20px;font-size:16px;outline:none}.command-list{padding:8px;max-height:360px;overflow:auto}.command-item{width:100%;border:0;background:transparent;color:var(--text-secondary);border-radius:14px;padding:12px;display:flex;align-items:center;gap:12px;text-align:left}.command-item:hover,.command-item.active{background:var(--bg-hover);color:var(--text-primary)}
+@media(max-width:1050px){.action-grid{grid-template-columns:1fr}.command-button{min-width:0;width:100%}}
+@media(max-width:700px){.command-button{grid-column:1/-1;justify-content:flex-start}.dashboard-hero{padding:20px}.hero-title{font-size:30px}.action-grid{gap:10px}.command-overlay{padding-top:8vh}}
+
 </style>
 </head>
 <body>
@@ -848,6 +864,7 @@ tbody tr:last-child td{border-bottom:none}
       </div>
     </div>
     <div class="topbar-right">
+      <button class="command-button" id="commandButton" type="button" onclick="openCommandPalette()">⌕ Quick command <span class="command-kbd">⌘K</span></button>
       <div class="project-switcher" id="topProjectSwitcher">
         <select id="topProjectSelect" class="topbar-select" aria-label="Select project">
           <option value="">All Projects</option>
@@ -912,6 +929,12 @@ tbody tr:last-child td{border-bottom:none}
         <div class="insight-card"><div class="insight-label">Scan posture</div><div class="insight-value" id="insightPosture">Stable</div><div class="insight-hint">Live execution activity</div></div>
       </div>
 
+      <div class="action-grid" aria-label="Primary dashboard actions">
+        <button class="action-tile" onclick="nav('projects')"><span class="action-icon">⚡</span><span><span class="action-title">Launch a scan</span><span class="action-copy">Create a project or run an immediate hostname health check.</span></span></button>
+        <button class="action-tile" onclick="nav('subdomain-tool')"><span class="action-icon">🛰️</span><span><span class="action-title">Expand coverage</span><span class="action-copy">Enumerate subdomains and discover new certificate inventory.</span></span></button>
+        <button class="action-tile" onclick="nav('settings')"><span class="action-icon">🛡️</span><span><span class="action-title">Tune alerting</span><span class="action-copy">Route critical findings and adjust certificate trigger rules.</span></span></button>
+      </div>
+
       <div class="stats-row">
         <div class="stat-card blue">
           <div class="stat-icon">🌐</div>
@@ -937,6 +960,13 @@ tbody tr:last-child td{border-bottom:none}
 
       <div class="dashboard-grid">
         <div>
+      <div class="timeline-panel" style="margin-bottom:18px">
+        <div class="timeline-head"><span class="card-title">Operations Timeline</span><span class="timeline-chip" id="timelineFreshness">Live</span></div>
+        <div class="timeline-list" id="opsTimeline">
+          <div class="empty" style="padding:24px 12px"><div class="empty-title">Waiting for activity</div><p class="empty-desc">Scans, alerts, and log activity will appear here.</p></div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Active Scans</span>
@@ -1622,6 +1652,13 @@ tbody tr:last-child td{border-bottom:none}
   </div>
 </div>
 
+<div class="command-overlay" id="commandOverlay" role="dialog" aria-modal="true" aria-label="Quick command palette">
+  <div class="command-panel">
+    <input class="command-search" id="commandSearch" placeholder="Search actions, pages, and workflows..." autocomplete="off">
+    <div class="command-list" id="commandList"></div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 
 <script>
@@ -1741,6 +1778,42 @@ function initGenericTableSorting() {
   const debouncedEnhance = debounce(() => enhanceGenericSortableTables(), 80);
   genericTableObserver = new MutationObserver(() => debouncedEnhance());
   genericTableObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+
+// ════════════════════════════════════════════════════════════
+// COMMAND PALETTE & TIMELINE
+// ════════════════════════════════════════════════════════════
+const COMMANDS = [
+  { label:'Open dashboard', hint:'Overview and health score', page:'dashboard', icon:'⌂' },
+  { label:'Create or scan projects', hint:'Project inventory and quick scan', page:'projects', icon:'⚡' },
+  { label:'Review alerts', hint:'Unseen certificate issues', page:'alerts', icon:'🔔' },
+  { label:'Run subdomain enumeration', hint:'Subfinder and passive discovery', page:'subdomain-tool', icon:'🛰️' },
+  { label:'View live logs', hint:'Execution stream', page:'logs', icon:'📜' },
+  { label:'Open settings', hint:'Theme, automation, integrations', page:'settings', icon:'⚙️' },
+];
+
+function renderCommandPalette() {
+  const q = (document.getElementById('commandSearch')?.value || '').toLowerCase();
+  const list = document.getElementById('commandList');
+  if (!list) return;
+  const rows = COMMANDS.filter(c => `${c.label} ${c.hint}`.toLowerCase().includes(q));
+  list.innerHTML = rows.map((c,i) => `<button class="command-item ${i===0?'active':''}" onclick="runCommand('${c.page}')"><span class="action-icon" style="width:32px;height:32px;border-radius:11px">${c.icon}</span><span><span class="action-title">${c.label}</span><span class="action-copy">${c.hint}</span></span></button>`).join('') || '<div class="project-switcher-empty">No matching command.</div>';
+}
+function openCommandPalette(){document.getElementById('commandOverlay')?.classList.add('open');renderCommandPalette();setTimeout(()=>document.getElementById('commandSearch')?.focus(),30)}
+function closeCommandPalette(){document.getElementById('commandOverlay')?.classList.remove('open')}
+function runCommand(page){closeCommandPalette();nav(page)}
+document.getElementById('commandSearch')?.addEventListener('input', renderCommandPalette);
+document.getElementById('commandOverlay')?.addEventListener('click', e => { if (e.target.id === 'commandOverlay') closeCommandPalette(); });
+document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='k') { e.preventDefault(); openCommandPalette(); } if (e.key==='Escape') closeCommandPalette(); });
+
+function renderOpsTimeline(items = []) {
+  const el = document.getElementById('opsTimeline');
+  if (!el) return;
+  if (!items.length) return;
+  el.innerHTML = items.slice(0,5).map(item => `<div class="timeline-item"><span class="timeline-dot" style="background:${item.color};box-shadow:0 0 0 5px ${item.glow}"></span><span><div class="timeline-title">${esc(item.title)}</div><div class="timeline-meta">${esc(item.meta)}</div></span><span class="timeline-chip">${esc(item.type)}</span></div>`).join('');
+  const fresh = document.getElementById('timelineFreshness');
+  if (fresh) fresh.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2241,6 +2314,13 @@ function renderLogs(rows) {
   const active = [...rows].reverse().find(r => r.status === 'running');
   const failed = [...rows].reverse().find(r => r.status === 'failed');
   document.getElementById('dash-log-status').textContent = active ? 'Running' : failed ? 'Failed' : 'Idle';
+  renderOpsTimeline(rows.slice(-5).reverse().map(r => ({
+    title: r.message || 'Log event',
+    meta: `${r.component || 'system'} • ${new Date(r.timestamp).toLocaleString()}`,
+    type: r.level || 'INFO',
+    color: r.level==='ERROR' ? 'var(--red)' : r.level==='WARNING' ? 'var(--amber)' : 'var(--accent)',
+    glow: r.level==='ERROR' ? 'var(--red-dim)' : r.level==='WARNING' ? 'var(--amber-dim)' : 'var(--accent-dim)',
+  })));
   el.innerHTML = rows.slice(-80).reverse().map(r => `<div style="padding:4px 0;border-bottom:1px solid var(--border-subtle)">
     <span style="color:var(--text-muted)">[${new Date(r.timestamp).toLocaleTimeString()}]</span>
     <span style="color:${r.level==='ERROR'?'var(--red)':r.level==='WARNING'?'var(--amber)':'var(--text-secondary)'}">${r.level}</span>
@@ -2274,6 +2354,13 @@ async function refreshActiveScans() {
       return;
     }
     const posture = document.getElementById('insightPosture'); if (posture) posture.textContent = `${scans.length} running`;
+    renderOpsTimeline(scans.map(s => ({
+      title: `${s.project_name} scan in progress`,
+      meta: `${fmt(s.progress)} of ${fmt(s.total)} hosts checked`,
+      type: 'scan',
+      color: 'var(--green)',
+      glow: 'var(--green-dim)',
+    })));
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Project</th><th style="min-width:220px">Progress</th><th>Checked</th></tr></thead><tbody>`+
       scans.map(s => {
         const pct = s.total>0?Math.round(s.progress/s.total*100):0;
