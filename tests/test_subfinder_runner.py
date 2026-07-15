@@ -28,3 +28,55 @@ def test_is_host_within_root_requires_domain_boundary():
     assert _is_host_within_root("a.example.com", "example.com") is True
     assert _is_host_within_root("example.com", "example.com") is True
     assert _is_host_within_root("badexample.com", "example.com") is False
+
+
+def test_run_subfinder_async_reserves_capacity_before_thread_starts(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(runner, "MAX_CONCURRENT_SUBFINDER_PROJECTS", 1)
+    with runner._sf_lock:
+        runner._sf_state.clear()
+
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            started_threads.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(runner.threading, "Thread", FakeThread)
+
+    assert runner.run_subfinder_async("project-one", triggered_by="scheduler") is True
+    assert runner.run_subfinder_async("project-two", triggered_by="scheduler") is False
+    assert len(started_threads) == 1
+    assert runner.get_sf_state("project-one")["status"] == "queued"
+
+
+def test_subfinder_scheduler_does_not_mark_due_project_run_when_capacity_full(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(runner, "MAX_CONCURRENT_SUBFINDER_PROJECTS", 1)
+    with runner._sf_lock:
+        runner._sf_state.clear()
+        runner._sf_state["busy-project"] = {"status": "ssl_scanning", "job_id": "job", "new_count": 1}
+
+    scheduler = runner.SubfinderScheduler()
+    monkeypatch.setattr(runner.time, "time", lambda: 1_000_000)
+    monkeypatch.setattr(
+        "db.database.project_list",
+        lambda: [
+            {
+                "id": "due-project",
+                "enabled": 1,
+                "subfinder_enabled": 1,
+                "subfinder_interval_minutes": 10,
+            }
+        ],
+    )
+
+    scheduler._tick()
+
+    assert "due-project" not in scheduler._last_run
