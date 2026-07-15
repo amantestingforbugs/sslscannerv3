@@ -80,3 +80,40 @@ def test_subfinder_scheduler_does_not_mark_due_project_run_when_capacity_full(mo
     scheduler._tick()
 
     assert "due-project" not in scheduler._last_run
+
+
+def test_run_subfinder_async_clears_reservation_when_thread_start_fails(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(runner, "MAX_CONCURRENT_SUBFINDER_PROJECTS", 1)
+    with runner._sf_lock:
+        runner._sf_state.clear()
+
+    class FailingThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self):
+            raise RuntimeError("thread limit reached")
+
+    monkeypatch.setattr(runner.threading, "Thread", FailingThread)
+
+    assert runner.run_subfinder_async("project-one", triggered_by="scheduler") is False
+    assert runner.get_sf_state("project-one") == {}
+
+
+def test_subfinder_worker_marks_error_when_setup_raises(monkeypatch):
+    import subfinder.runner as runner
+
+    with runner._sf_lock:
+        runner._sf_state.clear()
+        runner._sf_state["project-one"] = {"status": "queued", "job_id": None, "new_count": 0}
+
+    def fail_setup(project_id, triggered_by):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(runner, "run_subfinder_for_project", fail_setup)
+
+    runner._run_subfinder_worker("project-one", "scheduler")
+
+    assert runner.get_sf_state("project-one")["status"] == "error"
