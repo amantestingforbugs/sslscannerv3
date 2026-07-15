@@ -593,15 +593,27 @@ tbody tr:last-child td{border-bottom:none}
 
 
 /* Advanced dashboard composition */
-.dashboard-hero{position:relative;overflow:hidden;border:1px solid color-mix(in srgb,var(--border) 70%,transparent);border-radius:var(--radius-lg);padding:24px;margin-bottom:18px;background:linear-gradient(135deg,rgba(79,70,229,.92),rgba(124,58,237,.76) 48%,rgba(6,182,212,.62));box-shadow:var(--shadow);isolation:isolate}
-.dashboard-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 76% 18%,rgba(255,255,255,.34),transparent 24%),linear-gradient(90deg,rgba(255,255,255,.16),transparent 52%);z-index:-1}
-.hero-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.8fr);gap:20px;align-items:center}
-.hero-eyebrow{color:rgba(255,255,255,.78);font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
-.hero-title{font-size:clamp(26px,4vw,42px);font-weight:850;line-height:1;letter-spacing:-.055em;color:#fff;margin-bottom:10px}
-.hero-copy{max-width:680px;color:rgba(255,255,255,.82);font-size:14px}
+.dashboard-hero{
+  position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.18);border-radius:var(--radius-lg);padding:28px;margin-bottom:18px;
+  background:
+    linear-gradient(135deg,rgba(9,13,22,.78),rgba(49,46,129,.36) 36%,rgba(6,182,212,.12)),
+    radial-gradient(circle at 16% 18%,rgba(99,102,241,.78),transparent 34%),
+    radial-gradient(circle at 86% 18%,rgba(34,211,238,.50),transparent 28%),
+    linear-gradient(135deg,#111827 0%,#312e81 48%,#155e75 100%);
+  box-shadow:0 26px 80px rgba(15,23,42,.36),inset 0 1px 0 rgba(255,255,255,.20);isolation:isolate
+}
+.dashboard-hero::before{content:'';position:absolute;inset:0;background:linear-gradient(110deg,rgba(255,255,255,.18),transparent 34%,rgba(255,255,255,.08) 63%,transparent 82%);z-index:-1}
+.dashboard-hero::after{content:'';position:absolute;inset:auto -8% -42% 28%;height:190px;background:radial-gradient(ellipse at center,rgba(34,211,238,.28),transparent 68%);filter:blur(8px);z-index:-1}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.8fr);gap:24px;align-items:center}
+.hero-eyebrow{display:inline-flex;align-items:center;gap:8px;color:rgba(255,255,255,.84);font-size:11px;font-weight:850;letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px;padding:7px 10px;border:1px solid rgba(255,255,255,.20);border-radius:999px;background:rgba(15,23,42,.22);backdrop-filter:blur(14px)}
+.hero-eyebrow-dot{width:7px;height:7px;border-radius:999px;background:#34d399;box-shadow:0 0 0 5px rgba(52,211,153,.14),0 0 20px rgba(52,211,153,.75)}
+.hero-title{font-size:clamp(28px,4vw,46px);font-weight:850;line-height:.98;letter-spacing:-.06em;color:#fff;margin-bottom:12px;text-shadow:0 10px 34px rgba(0,0,0,.24)}
+.hero-copy{max-width:680px;color:rgba(255,255,255,.84);font-size:14px}
+.hero-signal-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.hero-signal-row span{padding:7px 10px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.10);color:rgba(255,255,255,.82);font-size:11px;font-weight:700}.hero-signal-row strong{color:#fff}
 .hero-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
-.hero-actions .btn{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.28);color:#fff;backdrop-filter:blur(12px)}
-.hero-actions .btn-primary{background:#fff;color:#4338ca;border-color:#fff}
+.hero-actions .btn{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.26);color:#fff;backdrop-filter:blur(12px);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+.hero-actions .btn:hover{background:rgba(255,255,255,.22);transform:translateY(-1px)}
+.hero-actions .btn-primary{background:linear-gradient(135deg,#fff,#dbeafe);color:#3730a3;border-color:rgba(255,255,255,.92);box-shadow:0 14px 30px rgba(15,23,42,.18)}
 .risk-orb{width:190px;height:190px;border-radius:50%;margin-left:auto;display:grid;place-items:center;background:conic-gradient(var(--green) var(--risk-deg,220deg),rgba(255,255,255,.22) 0);box-shadow:inset 0 0 0 14px rgba(255,255,255,.16),0 22px 60px rgba(0,0,0,.22)}
 .risk-orb-inner{width:132px;height:132px;border-radius:50%;background:rgba(15,23,42,.48);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.22)}
 .risk-score{font-size:36px;font-weight:850;line-height:1}.risk-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.75);margin-top:4px}.risk-help{max-width:260px;margin:14px 0 0 auto;padding:12px 14px;border:1px solid rgba(255,255,255,.24);border-radius:14px;background:rgba(15,23,42,.24);color:rgba(255,255,255,.86);font-size:12px;line-height:1.45;backdrop-filter:blur(14px)}.risk-help strong{display:block;color:#fff;font-size:13px;margin-bottom:3px}.risk-help span{color:#fff;font-weight:800}
@@ -834,9 +846,14 @@ tbody tr:last-child td{border-bottom:none}
       <section class="dashboard-hero" aria-labelledby="dashboardHeroTitle">
         <div class="hero-grid">
           <div>
-            <div class="hero-eyebrow">Real-time certificate command center</div>
+            <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>Real-time certificate command center</div>
             <h1 class="hero-title" id="dashboardHeroTitle">Know your SSL risk before users do.</h1>
             <p class="hero-copy">Unified monitoring, discovery telemetry, alerting, and live scan execution in a redesigned cockpit built for faster triage.</p>
+            <div class="hero-signal-row" aria-label="Dashboard monitoring signals">
+              <span><strong>Live</strong> telemetry</span>
+              <span><strong>24/7</strong> alert watch</span>
+              <span><strong>TLS</strong> coverage</span>
+            </div>
             <div class="hero-actions">
               <button class="btn btn-primary" onclick="nav('projects')">Create scan project</button>
               <button class="btn" onclick="nav('subdomain-tool')">Run subdomain enum</button>
