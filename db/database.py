@@ -816,16 +816,32 @@ def subdomain_tool_scan_ids_for_domain(domain):
     return [r["id"] for r in x("SELECT id FROM subdomain_tool_scans WHERE domain=?", (domain,)).fetchall()]
 
 
-def subdomain_tool_scans_delete_for_domain(domain, exclude_ids=()):
+def subdomain_tool_active_scans_for_domain(domain, active_statuses):
+    active_statuses = tuple(s for s in (active_statuses or ()) if s)
+    if not active_statuses:
+        return []
+    placeholders = ",".join("?" for _ in active_statuses)
+    rows = x(
+        f"SELECT * FROM subdomain_tool_scans WHERE domain=? AND status IN ({placeholders})",
+        (domain, *active_statuses),
+    ).fetchall()
+    return [_subdomain_tool_scan_row_to_dict(r) for r in rows]
+
+
+def subdomain_tool_scans_delete_for_domain(domain, exclude_ids=(), exclude_statuses=()):
     exclude_ids = tuple(i for i in (exclude_ids or ()) if i)
+    exclude_statuses = tuple(s for s in (exclude_statuses or ()) if s)
+    clauses = ["domain=?"]
+    params = [domain]
     if exclude_ids:
         placeholders = ",".join("?" for _ in exclude_ids)
-        x(
-            f"DELETE FROM subdomain_tool_scans WHERE domain=? AND id NOT IN ({placeholders})",
-            (domain, *exclude_ids),
-        )
-    else:
-        x("DELETE FROM subdomain_tool_scans WHERE domain=?", (domain,))
+        clauses.append(f"id NOT IN ({placeholders})")
+        params.extend(exclude_ids)
+    if exclude_statuses:
+        placeholders = ",".join("?" for _ in exclude_statuses)
+        clauses.append(f"status NOT IN ({placeholders})")
+        params.extend(exclude_statuses)
+    x(f"DELETE FROM subdomain_tool_scans WHERE {' AND '.join(clauses)}", tuple(params))
     commit()
 
 

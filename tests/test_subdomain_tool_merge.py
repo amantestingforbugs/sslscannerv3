@@ -59,3 +59,38 @@ assert all(scan["id"] != "delete-me" for scan in client.get("/api/tools/subdomai
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_merge_subdomain_tool_results_rejects_active_scan_for_domain(tmp_path):
+    repo = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo)
+    script = r'''
+from app import app
+import db.database as db
+import api.routes as routes
+
+client = app.test_client()
+
+db.subdomain_tool_scan_create("sf-new", "example.org", scan_type="subfinder")
+db.subdomain_tool_scan_update("sf-new", status="done", subdomains=["a.example.org"], total_found=1, finished_at="2026-01-02T00:00:00+00:00")
+db.subdomain_tool_scan_create("passive-new", "example.org", scan_type="passive")
+db.subdomain_tool_scan_update("passive-new", status="done", subdomains=["b.example.org"], total_found=1, finished_at="2026-01-03T00:00:00+00:00")
+db.subdomain_tool_scan_create("active-scan", "example.org", scan_type="subfinder")
+db.subdomain_tool_scan_update("active-scan", status="running")
+routes._subdomain_tool_state["active-scan"] = db.subdomain_tool_scan_get("active-scan")
+routes._subdomain_tool_threads["active-scan"] = object()
+routes._subdomain_tool_processes["active-scan"] = object()
+
+resp = client.post("/api/tools/subdomains/merge", json={"domain": "example.org"})
+assert resp.status_code == 409, resp.get_data(as_text=True)
+assert "Stop active subdomain enumeration scans" in resp.get_json()["error"]
+assert db.subdomain_tool_scan_get("active-scan")["status"] == "running"
+assert routes._subdomain_tool_state["active-scan"]["status"] == "running"
+assert "active-scan" in routes._subdomain_tool_threads
+assert "active-scan" in routes._subdomain_tool_processes
+history = client.get("/api/tools/subdomains?limit=10").get_json()["data"]
+assert {scan["id"] for scan in history if scan["domain"] == "example.org"} == {"sf-new", "passive-new", "active-scan"}
+'''
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
