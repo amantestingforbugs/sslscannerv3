@@ -11,8 +11,9 @@
    DESIGN TOKENS — dark/light via data-theme attribute
 ════════════════════════════════════════════════════════════ */
 :root {
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --radius-lg: 26px;
   --transition: 0.18s ease;
   --font: 'Inter', system-ui, sans-serif;
   --mono: 'JetBrains Mono', monospace;
@@ -21,9 +22,9 @@
 }
 
 [data-theme="dark"] {
-  --bg-base:    #0f1115;
-  --bg-surface: #151922;
-  --bg-raised:  #1a1f2b;
+  --bg-base:    #090d16;
+  --bg-surface: rgba(21,25,34,.82);
+  --bg-raised:  rgba(26,31,43,.86);
   --bg-hover:   #1e2432;
   --border:     #252c3b;
   --border-subtle: #1d2432;
@@ -42,8 +43,8 @@
   --orange-dim:  rgba(251,146,60,0.1);
   --purple:      #a78bfa;
   --purple-dim:  rgba(167,139,250,0.1);
-  --shadow:      0 4px 24px rgba(0,0,0,0.4);
-  --shadow-sm:   0 2px 8px rgba(0,0,0,0.3);
+  --shadow:      0 24px 80px rgba(0,0,0,0.42);
+  --shadow-sm:   0 14px 36px rgba(0,0,0,0.24);
 }
 
 [data-theme="light"] {
@@ -68,8 +69,8 @@
   --orange-dim:  rgba(234,88,12,0.08);
   --purple:      #7c3aed;
   --purple-dim:  rgba(124,58,237,0.08);
-  --shadow:      0 4px 24px rgba(0,0,0,0.08);
-  --shadow-sm:   0 2px 8px rgba(0,0,0,0.06);
+  --shadow:      0 24px 80px rgba(15,23,42,0.10);
+  --shadow-sm:   0 14px 36px rgba(15,23,42,0.08);
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -77,7 +78,7 @@
 ════════════════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{background:var(--bg-base);color:var(--text-primary);font-family:var(--font);font-size:13.5px;line-height:1.5;transition:background var(--transition),color var(--transition)}
+body{background:var(--bg-base);color:var(--text-primary);font-family:var(--font);font-size:13.5px;line-height:1.5;transition:background var(--transition),color var(--transition);background-image:radial-gradient(circle at 35% -10%, rgba(79,70,229,.20), transparent 34%),radial-gradient(circle at 90% 12%, rgba(6,182,212,.12), transparent 30%)}
 a{text-decoration:none;color:inherit}
 button{cursor:pointer;font-family:inherit}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -173,8 +174,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 /* ── TOPBAR ── */
 .topbar{
-  height:var(--header-h);background:var(--bg-surface);
-  border-bottom:1px solid var(--border);
+  height:var(--header-h);background:color-mix(in srgb,var(--bg-surface) 90%,transparent);
+  border-bottom:1px solid var(--border);backdrop-filter:blur(18px);
   display:flex;align-items:center;padding:0 24px;gap:16px;
   flex-shrink:0;
 }
@@ -202,7 +203,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .theme-toggle:hover{background:var(--bg-hover);color:var(--text-primary)}
 
 /* ── CONTENT ── */
-.content{flex:1;overflow-y:auto;padding:24px}
+.content{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth}
 
 /* ════════════════════════════════════════════════════════════
    PAGES
@@ -222,12 +223,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
 
 .stat-card{
-  background:var(--bg-surface);border:1px solid var(--border);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--bg-surface) 94%,white 6%),var(--bg-surface));border:1px solid color-mix(in srgb,var(--border) 76%,transparent);
   border-radius:var(--radius);padding:18px;
-  position:relative;overflow:hidden;
-  transition:all var(--transition);
+  position:relative;overflow:hidden;isolation:isolate;
+  transition:transform var(--transition),box-shadow var(--transition),border-color var(--transition);
 }
-.stat-card:hover{transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.stat-card::after{content:'';position:absolute;inset:auto -20% -45% 35%;height:90px;background:radial-gradient(circle, currentColor, transparent 64%);opacity:.08;z-index:-1}
+.stat-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-sm);border-color:color-mix(in srgb,var(--accent) 28%,var(--border))}
 
 .stat-icon{
   width:36px;height:36px;border-radius:8px;
@@ -259,9 +261,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
    CARDS
 ════════════════════════════════════════════════════════════ */
 .card{
-  background:var(--bg-surface);border:1px solid var(--border);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--bg-surface) 96%,white 4%),var(--bg-surface));border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
   border-radius:var(--radius);margin-bottom:18px;overflow:hidden;
-  transition:background var(--transition);
+  transition:background var(--transition),box-shadow var(--transition),transform var(--transition);box-shadow:var(--shadow-sm);backdrop-filter:blur(18px);
 }
 .card-header{
   display:flex;align-items:center;justify-content:space-between;
@@ -548,6 +550,24 @@ tbody tr:last-child td{border-bottom:none}
 .subdomain-results-box{border:1px solid var(--border);border-radius:12px;background:var(--bg-base);overflow:hidden}
 @media(max-width:1000px){.subdomain-tool-layout{grid-template-columns:1fr}}
 
+
+/* Advanced dashboard composition */
+.dashboard-hero{position:relative;overflow:hidden;border:1px solid color-mix(in srgb,var(--border) 70%,transparent);border-radius:var(--radius-lg);padding:24px;margin-bottom:18px;background:linear-gradient(135deg,rgba(79,70,229,.92),rgba(124,58,237,.76) 48%,rgba(6,182,212,.62));box-shadow:var(--shadow);isolation:isolate}
+.dashboard-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 76% 18%,rgba(255,255,255,.34),transparent 24%),linear-gradient(90deg,rgba(255,255,255,.16),transparent 52%);z-index:-1}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.8fr);gap:20px;align-items:center}
+.hero-eyebrow{color:rgba(255,255,255,.78);font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
+.hero-title{font-size:clamp(26px,4vw,42px);font-weight:850;line-height:1;letter-spacing:-.055em;color:#fff;margin-bottom:10px}
+.hero-copy{max-width:680px;color:rgba(255,255,255,.82);font-size:14px}
+.hero-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.hero-actions .btn{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.28);color:#fff;backdrop-filter:blur(12px)}
+.hero-actions .btn-primary{background:#fff;color:#4338ca;border-color:#fff}
+.risk-orb{width:190px;height:190px;border-radius:50%;margin-left:auto;display:grid;place-items:center;background:conic-gradient(var(--green) var(--risk-deg,220deg),rgba(255,255,255,.22) 0);box-shadow:inset 0 0 0 14px rgba(255,255,255,.16),0 22px 60px rgba(0,0,0,.22)}
+.risk-orb-inner{width:132px;height:132px;border-radius:50%;background:rgba(15,23,42,.48);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.22)}
+.risk-score{font-size:36px;font-weight:850;line-height:1}.risk-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.75);margin-top:4px}
+.dashboard-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.9fr);gap:18px;align-items:start}
+.insight-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}.insight-card{border:1px solid var(--border);background:var(--bg-raised);border-radius:16px;padding:14px}.insight-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;font-weight:800}.insight-value{font-size:18px;font-weight:800;margin-top:5px}.insight-hint{font-size:11px;color:var(--text-secondary);margin-top:4px}
+@media(max-width:1050px){.hero-grid,.dashboard-grid{grid-template-columns:1fr}.risk-orb{margin:8px auto 0}.insight-strip{grid-template-columns:1fr}}
+
 /* ════════════════════════════════════════════════════════════
    EMPTY STATE
 ════════════════════════════════════════════════════════════ */
@@ -622,9 +642,10 @@ tbody tr:last-child td{border-bottom:none}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 
-/* Minimal SaaS dashboard overrides */
-.card,.stat-card,.project-card,.modal{box-shadow:none}
-.card,.stat-card,.project-card{border-radius:12px}
+/* Refined SaaS dashboard overrides */
+.project-card,.modal{box-shadow:none}
+.card,.stat-card{border-radius:var(--radius)}
+.project-card{border-radius:14px}
 .topbar{gap:12px}
 .topbar-right{gap:8px}
 .topbar-select{
@@ -758,6 +779,33 @@ tbody tr:last-child td{border-bottom:none}
 
     <!-- ══════ DASHBOARD ══════ -->
     <div class="page active" id="page-dashboard">
+      <section class="dashboard-hero" aria-labelledby="dashboardHeroTitle">
+        <div class="hero-grid">
+          <div>
+            <div class="hero-eyebrow">Real-time certificate command center</div>
+            <h1 class="hero-title" id="dashboardHeroTitle">Know your SSL risk before users do.</h1>
+            <p class="hero-copy">Unified monitoring, discovery telemetry, alerting, and live scan execution in a redesigned cockpit built for faster triage.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" onclick="nav('projects')">Create scan project</button>
+              <button class="btn" onclick="nav('subdomain-tool')">Run subdomain enum</button>
+              <button class="btn" onclick="nav('alerts')">Review alerts</button>
+            </div>
+          </div>
+          <div class="risk-orb" id="riskOrb">
+            <div class="risk-orb-inner">
+              <div class="risk-score" id="riskScore">—</div>
+              <div class="risk-label">Health score</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="insight-strip">
+        <div class="insight-card"><div class="insight-label">Coverage</div><div class="insight-value" id="insightCoverage">—</div><div class="insight-hint">Active certificates vs watched domains</div></div>
+        <div class="insight-card"><div class="insight-label">Open alert load</div><div class="insight-value" id="insightAlerts">—</div><div class="insight-hint">Unseen items that need review</div></div>
+        <div class="insight-card"><div class="insight-label">Scan posture</div><div class="insight-value" id="insightPosture">Stable</div><div class="insight-hint">Live execution activity</div></div>
+      </div>
+
       <div class="stats-row">
         <div class="stat-card blue">
           <div class="stat-icon">🌐</div>
@@ -781,6 +829,8 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
+      <div class="dashboard-grid">
+        <div>
       <div class="card">
         <div class="card-header">
           <span class="card-title">Active Scans</span>
@@ -801,6 +851,8 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
+        </div>
+        <div>
       <div class="card">
         <div class="card-header">
           <span class="card-title">Live Execution Logs</span>
@@ -810,6 +862,8 @@ tbody tr:last-child td{border-bottom:none}
           <div id="dash-logs" class="logs-panel" style="max-height:260px;overflow:auto;font-family:var(--mono);font-size:12px">
             <div class="empty"><div class="empty-icon">📜</div><div class="empty-title">Waiting for logs</div></div>
           </div>
+        </div>
+      </div>
         </div>
       </div>
     </div>
@@ -1920,11 +1974,20 @@ function applyStat(s) {
   const openAlerts = Number(s.unseen_alerts ?? s.mismatches ?? 0);
   if (sideWatched) sideWatched.textContent = watched ? fmt(watched) : '0';
   if (sideAlerts) sideAlerts.textContent = fmt(openAlerts);
-  if (sideMeter) {
-    const activeDomains = Number(s.ok || 0);
-    const coverage = watched > 0 ? Math.max(8, Math.min(100, Math.round((activeDomains / watched) * 100))) : 0;
-    sideMeter.style.width = `${coverage}%`;
-  }
+  const activeDomains = Number(s.ok || 0);
+  const mismatches = Number(s.mismatches || 0);
+  const coverageRaw = watched > 0 ? Math.round((activeDomains / watched) * 100) : 0;
+  const coverage = watched > 0 ? Math.max(8, Math.min(100, coverageRaw)) : 0;
+  if (sideMeter) sideMeter.style.width = `${coverage}%`;
+  const score = watched > 0 ? Math.max(0, Math.min(100, Math.round(100 - (mismatches / watched * 55) - (openAlerts / Math.max(watched, 1) * 35)))) : 100;
+  const riskScore = document.getElementById('riskScore');
+  const riskOrb = document.getElementById('riskOrb');
+  const insightCoverage = document.getElementById('insightCoverage');
+  const insightAlerts = document.getElementById('insightAlerts');
+  if (riskScore) riskScore.textContent = score;
+  if (riskOrb) riskOrb.style.setProperty('--risk-deg', `${Math.round(score * 3.6)}deg`);
+  if (insightCoverage) insightCoverage.textContent = watched ? `${coverageRaw}%` : 'No domains';
+  if (insightAlerts) insightAlerts.textContent = openAlerts ? `${fmt(openAlerts)} open` : 'Clear';
 }
 
 async function loadDash() {
@@ -1982,9 +2045,11 @@ async function refreshActiveScans() {
     const { data: scans } = await fetch('/api/active-scans').then(r => r.json());
     const el = document.getElementById('dash-active-scans');
     if (!scans?.length) {
-      el.innerHTML = '<div class="empty"><div class="empty-icon">⚡</div><div class="empty-title">No scans running</div></div>';
+      el.innerHTML = '<div class="empty"><div class="empty-icon">⚡</div><div class="empty-title">No scans running</div><p class="empty-desc">The scan lane is ready when you are.</p></div>';
+      const posture = document.getElementById('insightPosture'); if (posture) posture.textContent = 'Stable';
       return;
     }
+    const posture = document.getElementById('insightPosture'); if (posture) posture.textContent = `${scans.length} running`;
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Project</th><th style="min-width:220px">Progress</th><th>Checked</th></tr></thead><tbody>`+
       scans.map(s => {
         const pct = s.total>0?Math.round(s.progress/s.total*100):0;
