@@ -336,11 +336,36 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   background:var(--bg-base);border:1px solid var(--border);
   color:var(--text-primary);font-family:var(--font);font-size:13px;
   padding:9px 12px;border-radius:var(--radius-sm);outline:none;
-  transition:border-color var(--transition);width:100%;
+  transition:border-color var(--transition),box-shadow var(--transition),background var(--transition),transform var(--transition);width:100%;
 }
+.form-input:hover{border-color:color-mix(in srgb,var(--accent) 34%,var(--border));background:color-mix(in srgb,var(--bg-base) 88%,var(--bg-raised))}
 .form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 .form-input::placeholder{color:var(--text-muted)}
-select.form-input option{background:var(--bg-surface)}
+select.form-input{
+  appearance:none;-webkit-appearance:none;cursor:pointer;min-height:40px;font-weight:650;
+  padding-right:42px;
+  background-image:
+    linear-gradient(45deg,transparent 50%,var(--accent) 50%),
+    linear-gradient(135deg,var(--accent) 50%,transparent 50%),
+    linear-gradient(135deg,color-mix(in srgb,var(--bg-raised) 96%,transparent),color-mix(in srgb,var(--bg-surface) 90%,transparent));
+  background-position:
+    calc(100% - 22px) calc(50% + 1px),
+    calc(100% - 16px) calc(50% + 1px),
+    0 0;
+  background-size:6px 6px,6px 6px,100% 100%;
+  background-repeat:no-repeat;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 24px rgba(0,0,0,.08);
+}
+select.form-input:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 14px 30px rgba(79,70,229,.13)}
+select.form-input:focus{background-image:
+  linear-gradient(45deg,transparent 50%,var(--accent) 50%),
+  linear-gradient(135deg,var(--accent) 50%,transparent 50%),
+  linear-gradient(135deg,color-mix(in srgb,var(--accent-dim) 50%,var(--bg-raised)),color-mix(in srgb,var(--bg-surface) 92%,transparent));
+}
+select.form-input:disabled{cursor:not-allowed;opacity:.55;transform:none;box-shadow:none}
+select.form-input option{background:var(--bg-surface);color:var(--text-primary);font-weight:600}
+select.form-input option:checked{background:linear-gradient(135deg,var(--accent),#06b6d4);color:#fff}
+[data-theme="light"] select.form-input{box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 10px 24px rgba(15,23,42,.06)}
 textarea.form-input{min-height:100px;resize:vertical;line-height:1.6;font-family:var(--mono);font-size:12px}
 .form-row{display:flex;gap:12px;align-items:flex-end}
 .form-row .form-group{flex:1;margin-bottom:0}
