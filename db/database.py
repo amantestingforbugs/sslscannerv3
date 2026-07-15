@@ -807,6 +807,28 @@ def subdomain_tool_scans_list(limit=20):
     return [_subdomain_tool_scan_row_to_dict(r) for r in rows]
 
 
+def subdomain_tool_scan_delete(sid):
+    x("DELETE FROM subdomain_tool_scans WHERE id=?", (sid,))
+    commit()
+
+
+def subdomain_tool_scan_ids_for_domain(domain):
+    return [r["id"] for r in x("SELECT id FROM subdomain_tool_scans WHERE domain=?", (domain,)).fetchall()]
+
+
+def subdomain_tool_scans_delete_for_domain(domain, exclude_ids=()):
+    exclude_ids = tuple(i for i in (exclude_ids or ()) if i)
+    if exclude_ids:
+        placeholders = ",".join("?" for _ in exclude_ids)
+        x(
+            f"DELETE FROM subdomain_tool_scans WHERE domain=? AND id NOT IN ({placeholders})",
+            (domain, *exclude_ids),
+        )
+    else:
+        x("DELETE FROM subdomain_tool_scans WHERE domain=?", (domain,))
+    commit()
+
+
 def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_at=None):
     rid = uid()
     x(

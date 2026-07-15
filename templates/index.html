@@ -585,6 +585,9 @@ tbody tr:last-child td{border-bottom:none}
 .subdomain-scan-card{width:100%;text-align:left;border:1px solid var(--border);background:var(--bg-raised);border-radius:12px;padding:12px;cursor:pointer;transition:border-color var(--transition),background var(--transition),transform var(--transition)}
 .subdomain-scan-card:hover{border-color:var(--accent);background:var(--bg-hover);transform:translateY(-1px)}
 .subdomain-scan-card.active{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.subdomain-scan-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.subdomain-scan-delete{border:1px solid rgba(240,79,96,.35);background:var(--red-dim);color:var(--red);border-radius:9px;padding:4px 8px;font-size:11px;font-weight:800;cursor:pointer}
+.subdomain-scan-delete:hover{background:rgba(240,79,96,.20)}
 .subdomain-scan-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
 .subdomain-scan-domain{font-weight:750;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .subdomain-scan-meta{font-size:11px;color:var(--text-muted);display:flex;gap:8px;flex-wrap:wrap}
@@ -2184,6 +2187,11 @@ function connectSSE() {
     if (!['queued','running','paused','stopping'].includes(d.status)) loadSubdomainToolHistory();
   });
 
+  es.addEventListener('subdomain_tool_deleted', e => {
+    const d = JSON.parse(e.data);
+    removeSubdomainToolHistoryItem(d.id || d.scan_id);
+  });
+
   es.addEventListener('stats_update', e => {
     const s = JSON.parse(e.data);
     applyStat(s);
@@ -2665,6 +2673,19 @@ function upsertSubdomainToolHistory(scan) {
   renderSubdomainToolHistory(subdomainToolHistory);
 }
 
+function removeSubdomainToolHistoryItem(scanId) {
+  if (!scanId) return;
+  subdomainToolHistory = subdomainToolHistory.filter(item => (item.id || item.scan_id) !== scanId);
+  if (subdomainToolScanId === scanId) {
+    subdomainToolScanId = null;
+    subdomainToolRows = [];
+    subdomainToolPage = 1;
+    renderSubdomainToolRows([]);
+    updateSubdomainToolProgress({status:'idle'});
+  }
+  renderSubdomainToolHistory(subdomainToolHistory);
+}
+
 function renderSubdomainToolHistory(scans=[]) {
   const el = document.getElementById('subdomain-tool-history');
   if (!el) return;
@@ -2678,10 +2699,12 @@ function renderSubdomainToolHistory(scans=[]) {
     const active = ['queued','running','paused','stopping'].includes(scan.status);
     const badgeClass = scan.status === 'done' ? 'badge-ok' : (scan.status === 'paused' ? 'badge-paused' : (active ? 'badge-running' : 'badge-error'));
     const timestamp = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
-    return `<button class="subdomain-scan-card${selected}" onclick="openSubdomainToolScan('${scan.id || scan.scan_id}')">
-      <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${badgeClass}">${esc(scan.status || 'queued')}</span></div>
+    const scanId = scan.id || scan.scan_id;
+    const deleteDisabled = active ? ' disabled title="Stop this scan before deleting it"' : ' title="Delete this scan"';
+    return `<div class="subdomain-scan-card${selected}" role="button" tabindex="0" onclick="openSubdomainToolScan('${scanId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSubdomainToolScan('${scanId}')}">
+      <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="subdomain-scan-actions"><span class="badge ${badgeClass}">${esc(scan.status || 'queued')}</span><button class="subdomain-scan-delete" onclick="deleteSubdomainToolScan(event, '${scanId}')"${deleteDisabled}>Delete</button></span></div>
       <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(scan.scan_type === 'passive' ? 'Passive' : (scan.scan_type === 'merged' ? 'Merged' : 'Subfinder'))}</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
-    </button>`;
+    </div>`;
   }).join('');
 }
 
@@ -2692,6 +2715,19 @@ async function loadSubdomainToolHistory() {
     renderSubdomainToolHistory(subdomainToolHistory);
   } catch (e) {
     toast(e.message || 'Unable to load subdomain enumeration history', 'err');
+  }
+}
+
+async function deleteSubdomainToolScan(event, scanId) {
+  event?.stopPropagation();
+  if (!scanId) return;
+  if (!confirm('Delete this subdomain enumeration scan? This cannot be undone.')) return;
+  try {
+    await apiJSON(`/api/tools/subdomains/${scanId}`, { method:'DELETE' });
+    removeSubdomainToolHistoryItem(scanId);
+    toast('Subdomain enumeration scan deleted', 'ok');
+  } catch (e) {
+    toast(e.message || 'Unable to delete subdomain enumeration scan', 'err');
   }
 }
 
