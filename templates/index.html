@@ -334,6 +334,33 @@ textarea.form-input{min-height:100px;resize:vertical;line-height:1.6;font-family
 .integration-enabled{font-size:11px;color:var(--text-muted)}
 .settings-block-title{font-weight:700;margin:18px 0 10px}
 .rules-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+
+/* Advanced Settings */
+.settings-hero{display:grid;grid-template-columns:1.35fr .65fr;gap:16px;margin-bottom:18px}
+.settings-hero-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--bg-surface)),var(--bg-surface));box-shadow:var(--shadow-sm);overflow:hidden;position:relative}
+.settings-hero-card::after{content:'';position:absolute;right:-50px;top:-50px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 68%)}
+.settings-hero-kicker{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.14em;color:var(--text-muted);margin-bottom:8px}
+.settings-hero-title{font-size:24px;font-weight:850;letter-spacing:-.04em;margin-bottom:6px}
+.settings-hero-text{color:var(--text-secondary);max-width:680px}
+.settings-health{display:grid;gap:10px}
+.settings-health-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:16px;background:var(--bg-surface)}
+.settings-health-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted)}
+.settings-health-value{font-weight:800;color:var(--text-primary)}
+.settings-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start}
+.settings-rail{position:sticky;top:0;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-surface);padding:10px;box-shadow:var(--shadow-sm)}
+.settings-rail button{width:100%;border:0;background:transparent;color:var(--text-secondary);display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:12px;font-weight:700;text-align:left}
+.settings-rail button:hover,.settings-rail button.active{background:var(--accent-dim);color:var(--text-primary)}
+.settings-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-surface);box-shadow:var(--shadow-sm);margin-bottom:16px;overflow:hidden}
+.settings-panel-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:16px 18px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--bg-raised),var(--bg-surface))}
+.settings-panel-title{font-size:15px;font-weight:800}.settings-panel-sub{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.settings-panel-body{padding:18px}.settings-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.settings-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.setting-tile{border:1px solid var(--border);border-radius:16px;padding:14px;background:var(--bg-raised)}
+.setting-tile-title{font-weight:800;margin-bottom:4px}.setting-tile-sub{font-size:11.5px;color:var(--text-muted);margin-bottom:10px}
+.settings-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+body.compact-ui{font-size:12.5px}body.compact-ui .content{padding:16px}body.compact-ui .card-body,body.compact-ui .settings-panel-body{padding:14px}
+body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{animation:none!important;transition:none!important}
+@media (max-width: 1100px){.settings-hero,.settings-layout,.settings-grid-2,.settings-grid-3{grid-template-columns:1fr}.settings-rail{position:relative}}
+
 @media (max-width: 1100px){.integrations-grid{grid-template-columns:1fr}}
 
 /* ════════════════════════════════════════════════════════════
@@ -886,84 +913,85 @@ tbody tr:last-child td{border-bottom:none}
       <div class="page-header">
         <div>
           <div class="page-title">Settings</div>
-          <div class="page-sub">UI + alert routing rules</div>
+          <div class="page-sub">Advanced preferences, alert routing, and app controls</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" onclick="resetAppPreferences()">Reset UI</button>
+          <button class="btn btn-primary" onclick="saveAllSettings()">Save All Settings</button>
         </div>
       </div>
-      <div class="card">
-        <div class="card-body">
-          <div class="form-group" style="max-width:360px;margin-bottom:18px">
-            <label class="form-label">Theme Mode</label>
-            <select class="form-input" id="settingsTheme" onchange="setTheme(this.value)">
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </div>
-          <hr style="border:0;border-top:1px solid var(--border);margin:16px 0 18px">
-          <div class="settings-block-title">Integrations</div>
-          <div class="integrations-grid">
-            <div class="integration-card">
-              <div class="integration-head">
-                <div class="integration-name"><span class="integration-icon">💬</span>Telegram</div>
-                <label class="integration-enabled"><input type="checkbox" id="set-telegram-enabled"> Enabled</label>
-              </div>
-              <ol class="integration-steps">
-                <li>Create a bot with <code>@BotFather</code> and copy the bot token.</li>
-                <li>Add the bot to your target chat/channel.</li>
-                <li>Get the Chat ID and paste both values below.</li>
-              </ol>
-              <div class="form-group"><label class="form-label">Bot Token</label><input class="form-input" id="set-telegram-token" placeholder="123456:ABC..."></div>
-              <div class="form-group"><label class="form-label">Chat ID</label><input class="form-input" id="set-telegram-chat" placeholder="-1001234567890"></div>
-            </div>
-            <div class="integration-card">
-              <div class="integration-head">
-                <div class="integration-name"><span class="integration-icon">🟪</span>Slack</div>
-                <label class="integration-enabled"><input type="checkbox" id="set-slack-enabled"> Enabled</label>
-              </div>
-              <ol class="integration-steps">
-                <li>Open <b>Slack App → Incoming Webhooks</b>.</li>
-                <li>Enable incoming webhooks and choose the destination channel.</li>
-                <li>Copy the webhook URL and paste it below.</li>
-              </ol>
-              <div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-slack-webhook" placeholder="https://hooks.slack.com/services/..."></div>
-            </div>
-            <div class="integration-card">
-              <div class="integration-head">
-                <div class="integration-name"><span class="integration-icon">🎮</span>Discord</div>
-                <label class="integration-enabled"><input type="checkbox" id="set-discord-enabled"> Enabled</label>
-              </div>
-              <ol class="integration-steps">
-                <li>Open your channel settings and go to <b>Integrations → Webhooks</b>.</li>
-                <li>Create webhook, pick channel, and copy the webhook URL.</li>
-                <li>Paste below, save settings, then run a scan to send alerts.</li>
-              </ol>
-              <div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-discord-webhook" placeholder="https://discord.com/api/webhooks/..."></div>
-            </div>
-          </div>
 
-          <div class="settings-block-title">Alert Trigger Rules</div>
-          <div class="rules-grid">
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-mismatch"> SSL mismatch (hostname != certificate name)</label>
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-expired"> Expired certs</label>
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-expiring"> Expiring soon certs</label>
-            <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="set-rule-error"> Scan/TLS errors</label>
-          </div>
-          <div class="form-row" style="margin-top:10px">
-            <div class="form-group">
-              <label class="form-label">Mismatch Scope</label>
-              <select class="form-input" id="set-mismatch-scope">
-                <option value="all">All mismatches</option>
-                <option value="same_domain">Only same base-domain mismatch</option>
-                <option value="different_domain">Only cross-domain mismatch</option>
-              </select>
+      <div class="settings-hero">
+        <div class="settings-hero-card">
+          <div class="settings-hero-kicker">Control Center</div>
+          <div class="settings-hero-title">Tune SSL Sentinel for your workflow</div>
+          <div class="settings-hero-text">Manage appearance, automation behavior, notifications, integrations, and certificate alert rules from one command center.</div>
+        </div>
+        <div class="settings-health">
+          <div class="settings-health-item"><div><div class="settings-health-label">Theme</div><div class="settings-health-value" id="settingsThemeStatus">Dark</div></div><span>🎨</span></div>
+          <div class="settings-health-item"><div><div class="settings-health-label">Refresh</div><div class="settings-health-value" id="settingsRefreshStatus">30s</div></div><span>🔄</span></div>
+          <div class="settings-health-item"><div><div class="settings-health-label">Alerts</div><div class="settings-health-value" id="settingsAlertStatus">Loading</div></div><span>🚨</span></div>
+        </div>
+      </div>
+
+      <div class="settings-layout">
+        <div class="settings-rail">
+          <button class="active" onclick="scrollToSetting('appearance')">🎨 Appearance</button>
+          <button onclick="scrollToSetting('automation')">⚙️ Automation</button>
+          <button onclick="scrollToSetting('notifications')">🔔 Notifications</button>
+          <button onclick="scrollToSetting('integrations')">🔌 Integrations</button>
+          <button onclick="scrollToSetting('rules')">🛡️ Alert Rules</button>
+          <button onclick="scrollToSetting('data')">📦 Data Controls</button>
+        </div>
+        <div>
+          <section class="settings-panel" id="settings-appearance">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Appearance & Layout</div><div class="settings-panel-sub">Personalize how the dashboard looks and behaves locally.</div></div></div>
+            <div class="settings-panel-body settings-grid-2">
+              <div class="form-group"><label class="form-label">Theme Mode</label><select class="form-input" id="settingsTheme" onchange="setTheme(this.value); updateAppPreferencePreview()"><option value="light">Light</option><option value="dark">Dark</option></select></div>
+              <div class="form-group"><label class="form-label">Default Landing Page</label><select class="form-input" id="pref-default-page"><option value="dashboard">Dashboard</option><option value="projects">Projects</option><option value="alerts">Alerts</option><option value="subfinder">Subfinder</option><option value="logs">Logs</option></select></div>
+              <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-compact-switch"></span><span><div class="setting-tile-title">Compact density</div><div class="setting-tile-sub">Reduce spacing for large inventories.</div></span><input type="checkbox" id="pref-compact" hidden onchange="applyAppPreferencesFromForm()"></label>
+              <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-motion-switch"></span><span><div class="setting-tile-title">Reduce motion</div><div class="setting-tile-sub">Disable non-essential transitions and pulse effects.</div></span><input type="checkbox" id="pref-reduce-motion" hidden onchange="applyAppPreferencesFromForm()"></label>
             </div>
-            <div class="form-group">
-              <label class="form-label">Expiring soon threshold (days)</label>
-              <input class="form-input" id="set-min-days" type="number" min="1" max="365" value="30">
+          </section>
+
+          <section class="settings-panel" id="settings-automation">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Automation & App Controls</div><div class="settings-panel-sub">Control live updates and productivity safeguards.</div></div></div>
+            <div class="settings-panel-body settings-grid-3">
+              <div class="form-group"><label class="form-label">Live refresh interval</label><select class="form-input" id="pref-refresh"><option value="15">Every 15 seconds</option><option value="30">Every 30 seconds</option><option value="60">Every minute</option><option value="0">Manual only</option></select></div>
+              <div class="form-group"><label class="form-label">Quick scan row buffer</label><select class="form-input" id="pref-row-buffer"><option value="250">250 rows</option><option value="500">500 rows</option><option value="1000">1,000 rows</option></select></div>
+              <div class="form-group"><label class="form-label">Danger confirmations</label><select class="form-input" id="pref-confirm"><option value="strict">Strict confirmations</option><option value="standard">Standard prompts</option></select></div>
             </div>
-          </div>
-          <div style="display:flex;justify-content:flex-end;margin-top:8px">
-            <button class="btn btn-primary" onclick="saveAlertSettings()">Save Alert Settings</button>
-          </div>
+          </section>
+
+          <section class="settings-panel" id="settings-notifications">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Notification Preferences</div><div class="settings-panel-sub">Choose how this browser should surface app events.</div></div></div>
+            <div class="settings-panel-body settings-grid-2">
+              <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-toast-switch"></span><span><div class="setting-tile-title">Toast notifications</div><div class="setting-tile-sub">Show success, error, and alert status messages.</div></span><input type="checkbox" id="pref-toasts" hidden onchange="applyAppPreferencesFromForm()"></label>
+              <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-sound-switch"></span><span><div class="setting-tile-title">Sound cues</div><div class="setting-tile-sub">Reserve audible cues for future critical alert flows.</div></span><input type="checkbox" id="pref-sounds" hidden onchange="applyAppPreferencesFromForm()"></label>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settings-integrations">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Integrations</div><div class="settings-panel-sub">Route findings to Telegram, Slack, and Discord.</div></div></div>
+            <div class="settings-panel-body"><div class="integrations-grid">
+              <div class="integration-card"><div class="integration-head"><div class="integration-name"><span class="integration-icon">💬</span>Telegram</div><label class="integration-enabled"><input type="checkbox" id="set-telegram-enabled"> Enabled</label></div><ol class="integration-steps"><li>Create a bot with <code>@BotFather</code> and copy the bot token.</li><li>Add the bot to your target chat/channel.</li><li>Get the Chat ID and paste both values below.</li></ol><div class="form-group"><label class="form-label">Bot Token</label><input class="form-input" id="set-telegram-token" placeholder="123456:ABC..."></div><div class="form-group"><label class="form-label">Chat ID</label><input class="form-input" id="set-telegram-chat" placeholder="-1001234567890"></div></div>
+              <div class="integration-card"><div class="integration-head"><div class="integration-name"><span class="integration-icon">🟪</span>Slack</div><label class="integration-enabled"><input type="checkbox" id="set-slack-enabled"> Enabled</label></div><ol class="integration-steps"><li>Open <b>Slack App → Incoming Webhooks</b>.</li><li>Enable incoming webhooks and choose the destination channel.</li><li>Copy the webhook URL and paste it below.</li></ol><div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-slack-webhook" placeholder="https://hooks.slack.com/services/..."></div></div>
+              <div class="integration-card"><div class="integration-head"><div class="integration-name"><span class="integration-icon">🎮</span>Discord</div><label class="integration-enabled"><input type="checkbox" id="set-discord-enabled"> Enabled</label></div><ol class="integration-steps"><li>Open your channel settings and go to <b>Integrations → Webhooks</b>.</li><li>Create webhook, pick channel, and copy the webhook URL.</li><li>Paste below, save settings, then run a scan to send alerts.</li></ol><div class="form-group"><label class="form-label">Webhook URL</label><input class="form-input" id="set-discord-webhook" placeholder="https://discord.com/api/webhooks/..."></div></div>
+            </div></div>
+          </section>
+
+          <section class="settings-panel" id="settings-rules">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Alert Trigger Rules</div><div class="settings-panel-sub">Define which certificate states generate outgoing alerts.</div></div></div>
+            <div class="settings-panel-body">
+              <div class="rules-grid"><label><input type="checkbox" id="set-rule-mismatch"> SSL mismatch (hostname != certificate name)</label><label><input type="checkbox" id="set-rule-expired"> Expired certs</label><label><input type="checkbox" id="set-rule-expiring"> Expiring soon certs</label><label><input type="checkbox" id="set-rule-error"> Scan/TLS errors</label></div>
+              <div class="form-row" style="margin-top:12px"><div class="form-group"><label class="form-label">Mismatch Scope</label><select class="form-input" id="set-mismatch-scope"><option value="all">All mismatches</option><option value="same_domain">Only same base-domain mismatch</option><option value="different_domain">Only cross-domain mismatch</option></select></div><div class="form-group"><label class="form-label">Expiring soon threshold (days)</label><input class="form-input" id="set-min-days" type="number" min="1" max="365" value="30"></div></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settings-data">
+            <div class="settings-panel-head"><div><div class="settings-panel-title">Data & Preference Controls</div><div class="settings-panel-sub">Export, import, or reset browser-side app preferences.</div></div></div>
+            <div class="settings-panel-body"><textarea class="form-input" id="pref-json" placeholder="Exported preferences appear here" style="min-height:120px"></textarea><div class="settings-actions"><button class="btn" onclick="exportAppPreferences()">Export Preferences</button><button class="btn" onclick="importAppPreferences()">Import Preferences</button><button class="btn btn-primary" onclick="saveAllSettings()">Save All Settings</button></div></div>
+          </section>
         </div>
       </div>
     </div>
@@ -1651,6 +1679,117 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 });
 setTheme(localStorage.getItem(THEME_KEY) || 'dark');
 
+
+// ════════════════════════════════════════════════════════════
+// APP PREFERENCES
+// ════════════════════════════════════════════════════════════
+const APP_PREF_KEY = 'sentinel-app-preferences';
+const DEFAULT_APP_PREFS = {
+  defaultPage: 'dashboard',
+  refreshInterval: '30',
+  rowBuffer: '500',
+  confirmMode: 'strict',
+  compact: false,
+  reduceMotion: false,
+  toasts: true,
+  sounds: false,
+};
+
+function getAppPreferences() {
+  try { return { ...DEFAULT_APP_PREFS, ...JSON.parse(localStorage.getItem(APP_PREF_KEY) || '{}') }; }
+  catch { return { ...DEFAULT_APP_PREFS }; }
+}
+
+function setSwitchState(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('on', !!value);
+}
+
+function syncAppPreferencesForm() {
+  const p = getAppPreferences();
+  const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+  const setChecked = (id, value) => { const el = document.getElementById(id); if (el) el.checked = !!value; };
+  setValue('pref-default-page', p.defaultPage);
+  setValue('pref-refresh', p.refreshInterval);
+  setValue('pref-row-buffer', p.rowBuffer);
+  setValue('pref-confirm', p.confirmMode);
+  setChecked('pref-compact', p.compact);
+  setChecked('pref-reduce-motion', p.reduceMotion);
+  setChecked('pref-toasts', p.toasts);
+  setChecked('pref-sounds', p.sounds);
+  updateAppPreferencePreview();
+}
+
+function updateAppPreferencePreview() {
+  const p = getAppPreferences();
+  document.body.classList.toggle('compact-ui', !!p.compact);
+  document.body.classList.toggle('reduce-motion', !!p.reduceMotion);
+  setSwitchState('pref-compact-switch', p.compact);
+  setSwitchState('pref-motion-switch', p.reduceMotion);
+  setSwitchState('pref-toast-switch', p.toasts);
+  setSwitchState('pref-sound-switch', p.sounds);
+  const themeStatus = document.getElementById('settingsThemeStatus');
+  const refreshStatus = document.getElementById('settingsRefreshStatus');
+  if (themeStatus) themeStatus.textContent = (document.documentElement.dataset.theme || 'dark').replace(/^./, c => c.toUpperCase());
+  if (refreshStatus) refreshStatus.textContent = p.refreshInterval === '0' ? 'Manual' : `${p.refreshInterval}s`;
+}
+
+function applyAppPreferencesFromForm() {
+  const current = getAppPreferences();
+  const val = (id, fallback) => (document.getElementById(id)?.value ?? fallback);
+  const checked = (id) => !!document.getElementById(id)?.checked;
+  const next = {
+    ...current,
+    defaultPage: val('pref-default-page', current.defaultPage),
+    refreshInterval: val('pref-refresh', current.refreshInterval),
+    rowBuffer: val('pref-row-buffer', current.rowBuffer),
+    confirmMode: val('pref-confirm', current.confirmMode),
+    compact: checked('pref-compact'),
+    reduceMotion: checked('pref-reduce-motion'),
+    toasts: checked('pref-toasts'),
+    sounds: checked('pref-sounds'),
+  };
+  localStorage.setItem(APP_PREF_KEY, JSON.stringify(next));
+  updateAppPreferencePreview();
+}
+
+function saveAllSettings() {
+  applyAppPreferencesFromForm();
+  saveAlertSettings();
+}
+
+function resetAppPreferences() {
+  localStorage.setItem(APP_PREF_KEY, JSON.stringify(DEFAULT_APP_PREFS));
+  syncAppPreferencesForm();
+  toast('UI preferences reset', 'ok');
+}
+
+function exportAppPreferences() {
+  const out = document.getElementById('pref-json');
+  if (out) out.value = JSON.stringify(getAppPreferences(), null, 2);
+  toast('Preferences exported', 'ok');
+}
+
+function importAppPreferences() {
+  const raw = document.getElementById('pref-json')?.value || '';
+  try {
+    localStorage.setItem(APP_PREF_KEY, JSON.stringify({ ...DEFAULT_APP_PREFS, ...JSON.parse(raw) }));
+    syncAppPreferencesForm();
+    toast('Preferences imported', 'ok');
+  } catch { toast('Invalid preferences JSON', 'err'); }
+}
+
+function scrollToSetting(name) {
+  document.getElementById(`settings-${name}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.querySelectorAll('.settings-rail button').forEach(btn => btn.classList.remove('active'));
+  event?.currentTarget?.classList.add('active');
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target?.id?.startsWith('pref-')) applyAppPreferencesFromForm();
+});
+syncAppPreferencesForm();
+
 // ════════════════════════════════════════════════════════════
 // ALERT SETTINGS
 // ════════════════════════════════════════════════════════════
@@ -1672,6 +1811,8 @@ async function loadAlertSettings() {
     document.getElementById('set-rule-error').checked = !!s.rule_error;
     document.getElementById('set-mismatch-scope').value = s.mismatch_scope_filter || 'all';
     document.getElementById('set-min-days').value = Number(s.minimum_days_left || 30);
+    const alertStatus = document.getElementById('settingsAlertStatus');
+    if (alertStatus) alertStatus.textContent = [s.telegram_enabled && 'Telegram', s.slack_enabled && 'Slack', s.discord_enabled && 'Discord'].filter(Boolean).join(', ') || 'Local only';
   } catch {
     toast('Failed to load alert settings', 'err');
   }
@@ -1729,7 +1870,7 @@ function routeForPage(name) {
 
 function pageFromRoute() {
   const raw = window.location.hash.replace(/^#/, '');
-  if (!raw) return { name: localStorage.getItem('sslSentinel:lastPage') || 'dashboard' };
+  if (!raw) return { name: localStorage.getItem('sslSentinel:lastPage') || getAppPreferences().defaultPage || 'dashboard' };
   const [name, id] = raw.split('/').map(decodeURIComponent);
   return { name: name || 'dashboard', id: id || null };
 }
