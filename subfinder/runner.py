@@ -14,11 +14,13 @@ How it works:
 import gzip
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -31,6 +33,14 @@ SUBFINDER_BIN = shutil.which("subfinder") or "/usr/local/bin/subfinder"
 _sf_lock = threading.Lock()
 _sf_state = {}  # project_id -> {status, job_id, new_count}
 _subfinder_all_flag_supported: Optional[bool] = None
+MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRENT_PROJECTS", "1")))
+ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
+
+
+def _active_subfinder_project_count() -> int:
+    with _sf_lock:
+        return sum(1 for state in _sf_state.values() if state.get("status") in ACTIVE_SUBFINDER_STATUSES)
+
 
 
 def _resolve_subfinder_bin() -> Optional[str]:
@@ -261,17 +271,23 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
     project = project_get(project_id)
     if not project:
+        with _sf_lock:
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
         return None
 
     hosts = project_hosts(project_id)
     if not hosts:
         log.warning("Subfinder: project '%s' has no base hosts", project["name"])
         log_event("subfinder", "error", "No base hosts found for project", project_id=project_id, status="failed")
+        with _sf_lock:
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
         return None
 
     root_domains = _extract_project_root_domains(hosts)
     if not root_domains:
         log_event("subfinder", "error", "Unable to extract root domains", project_id=project_id, status="failed")
+        with _sf_lock:
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
         return None
 
     if not subfinder_available():
@@ -407,7 +423,7 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         subfinder_hosts_mark_scanned, alert_add, scan_progress
     )
     from core.ssl_checker import run_checker
-    from scheduler.runner import BATCH_SIZE, PROGRESS_UPDATE_EVERY, _scan_lock, _scan_state
+    from scheduler.runner import BATCH_SIZE, PROGRESS_UPDATE_EVERY, MAX_WORKERS, _scan_lock, _scan_state
 
     if not hostnames:
         return
@@ -420,8 +436,7 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         _scan_state[scan_id] = {
             "status": "running", "progress": 0, "total": total,
             "project_id": project_id, "project_name": f"subfinder-{project_id[:8]}",
-            "started_at": __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc).isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         }
 
     result_batch = []
@@ -457,31 +472,55 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
                     if scan_id in _scan_state:
                         _scan_state[scan_id]["progress"] = done_count[0]
 
-    run_checker(
-        hostnames,
-        max_workers=200,
-        progress_callback=on_result,
-        collect_results=False,
-    )
+    try:
+        # Reuse the scheduler-wide SSL worker cap instead of spawning a hard-coded
+        # 200-thread pool for every subfinder project.  Auto subfinder can run for
+        # multiple enabled projects from the background scheduler; keeping this
+        # bounded prevents thread exhaustion from taking down the web worker.
+        run_checker(
+            hostnames,
+            max_workers=MAX_WORKERS,
+            progress_callback=on_result,
+            collect_results=False,
+        )
 
-    with lock:
-        if result_batch:
-            results_batch_save(scan_id, project_id, result_batch)
+        with lock:
+            if result_batch:
+                results_batch_save(scan_id, project_id, result_batch)
 
-    scan_finish(scan_id)
-    subfinder_hosts_mark_scanned(project_id, scanned_hosts)
+        scan_finish(scan_id)
+        subfinder_hosts_mark_scanned(project_id, scanned_hosts)
 
-    with _scan_lock:
-        if scan_id in _scan_state:
-            _scan_state[scan_id]["status"] = "done"
-            _scan_state[scan_id]["progress"] = total
+        with _scan_lock:
+            if scan_id in _scan_state:
+                _scan_state[scan_id]["status"] = "done"
+                _scan_state[scan_id]["progress"] = total
+    except Exception as e:
+        log.exception("Subfinder SSL scan failed for project=%s job=%s: %s", project_id, job_id, e)
+        from db.database import scan_update
+        scan_update(scan_id, status="error", finished_at=datetime.now(timezone.utc).isoformat())
+        with _scan_lock:
+            if scan_id in _scan_state:
+                _scan_state[scan_id]["status"] = "error"
+        raise
 
 
 def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
-    """Start subfinder pipeline in background thread. Returns False if already running."""
+    """Start subfinder pipeline in background thread. Returns False if at capacity."""
     with _sf_lock:
-        if _sf_state.get(project_id, {}).get("status") in ("running", "ssl_scanning"):
+        if _sf_state.get(project_id, {}).get("status") in ACTIVE_SUBFINDER_STATUSES:
             return False
+        active_count = sum(
+            1 for state in _sf_state.values()
+            if state.get("status") in ACTIVE_SUBFINDER_STATUSES
+        )
+        if active_count >= MAX_CONCURRENT_SUBFINDER_PROJECTS:
+            return False
+        # Reserve the slot before starting the thread. Without this, the
+        # scheduler can launch many project threads in one tick before each
+        # worker has time to mark itself running, exhausting process threads
+        # once their SSL scans begin.
+        _sf_state[project_id] = {"status": "queued", "job_id": None, "new_count": 0}
 
     t = threading.Thread(
         target=run_subfinder_for_project,
@@ -536,8 +575,13 @@ class SubfinderScheduler:
             interval_min = max(10, min(30, int(p.get("subfinder_interval_minutes", 30) or 30)))
             interval_s = interval_min * 60
             if now_ts - self._last_run.get(pid, 0) >= interval_s:
-                self._last_run[pid] = now_ts
-                run_subfinder_async(pid, triggered_by="scheduler")
+                if _active_subfinder_project_count() >= MAX_CONCURRENT_SUBFINDER_PROJECTS:
+                    # Keep scheduled auto-enumeration serialized by default so
+                    # multiple enabled projects cannot create overlapping
+                    # subfinder subprocess pools plus SSL thread pools.
+                    continue
+                if run_subfinder_async(pid, triggered_by="scheduler"):
+                    self._last_run[pid] = now_ts
 
 
 _sf_scheduler = SubfinderScheduler()
