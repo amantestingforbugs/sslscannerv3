@@ -18,17 +18,15 @@ import os
 import re
 import shutil
 import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
 import threading
 import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from urllib.parse import urlparse
 from core.observability import log_event
+from subfinder.passive_sources import enumerate_passive_subdomains, passive_source_urls
 
 log = logging.getLogger(__name__)
 
@@ -38,105 +36,6 @@ _sf_state = {}  # project_id -> {status, job_id, new_count}
 _subfinder_all_flag_supported: Optional[bool] = None
 MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRENT_PROJECTS", "1")))
 ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
-
-PASSIVE_SOURCE_TIMEOUT = max(5, int(os.getenv("SUBDOMAIN_PASSIVE_SOURCE_TIMEOUT", "20")))
-
-
-def _candidate_hosts_from_text(text: str, root_domain: str) -> Set[str]:
-    """Extract in-scope hostnames from arbitrary source output."""
-    if not text:
-        return set()
-    escaped_root = re.escape(root_domain)
-    host_pattern = re.compile(rf"(?:\*\.)?(?:[a-z0-9-]+\.)+{escaped_root}", re.IGNORECASE)
-    hosts: Set[str] = set()
-    for match in host_pattern.finditer(text):
-        host = _normalize_host(match.group(0))
-        if host and _HOST_RE.match(host) and _is_host_within_root(host, root_domain):
-            hosts.add(host)
-    return hosts
-
-
-def _extract_hosts_from_json(payload: object, root_domain: str) -> Set[str]:
-    """Recursively extract in-scope hostnames from JSON API responses."""
-    hosts: Set[str] = set()
-    if isinstance(payload, dict):
-        for value in payload.values():
-            hosts.update(_extract_hosts_from_json(value, root_domain))
-    elif isinstance(payload, list):
-        for item in payload:
-            hosts.update(_extract_hosts_from_json(item, root_domain))
-    elif isinstance(payload, str):
-        hosts.update(_candidate_hosts_from_text(payload, root_domain))
-    return hosts
-
-
-def _fetch_passive_url(url: str, timeout: int) -> Tuple[str, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "ssl-sentinel-subdomain-enumerator/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        content_type = resp.headers.get("content-type", "")
-        body = resp.read(5_000_000).decode("utf-8", errors="replace")
-    return content_type, body
-
-
-def _passive_source_urls(root_domain: str) -> Dict[str, str]:
-    quoted = urllib.parse.quote(root_domain, safe="")
-    return {
-        "crt.sh": f"https://crt.sh/?q=%25.{quoted}&output=json",
-        "Cert Spotter": f"https://api.certspotter.com/v1/issuances?domain={quoted}&include_subdomains=true&expand=dns_names",
-        "HackerTarget": f"https://api.hackertarget.com/hostsearch/?q={quoted}",
-        "RapidDNS": f"https://rapiddns.io/subdomain/{quoted}?full=1",
-        "AlienVault OTX": f"https://otx.alienvault.com/api/v1/indicators/domain/{quoted}/passive_dns",
-        "urlscan.io": f"https://urlscan.io/api/v1/search/?q=domain:{quoted}",
-        "ThreatMiner": f"https://api.threatminer.org/v2/domain.php?q={quoted}&rt=5",
-        "BufferOver DNS": f"https://dns.bufferover.run/dns?q=.{quoted}",
-        "Anubis": f"https://jldc.me/anubis/subdomains/{quoted}",
-        "Wayback Machine": f"https://web.archive.org/cdx?url=*.{quoted}/*&output=json&fl=original&collapse=urlkey",
-    }
-
-
-def _query_passive_source(source: str, url: str, root_domain: str, timeout: int) -> Tuple[str, List[str], Optional[str]]:
-    try:
-        content_type, body = _fetch_passive_url(url, timeout)
-        hosts: Set[str] = set()
-        if "json" in content_type.lower() or body.lstrip().startswith(("{", "[")):
-            try:
-                hosts.update(_extract_hosts_from_json(json.loads(body), root_domain))
-            except json.JSONDecodeError:
-                hosts.update(_candidate_hosts_from_text(body, root_domain))
-        else:
-            hosts.update(_candidate_hosts_from_text(body, root_domain))
-        return source, sorted(hosts), None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        return source, [], str(exc)[:500]
-
-
-def enumerate_passive_subdomains(root_domain: str, timeout: int = PASSIVE_SOURCE_TIMEOUT) -> Dict[str, object]:
-    """Query built-in passive sources and return in-scope subdomains.
-
-    These sources require no API key, so a single scan can still enumerate from
-    CT logs, passive DNS/intel APIs, scanners, and web archives even when the
-    subfinder binary or provider config is unavailable. Slow or rate-limited
-    sources are reported as warnings and do not fail the overall enumeration.
-    """
-    found_by_source: Dict[str, List[str]] = {}
-    errors: Dict[str, str] = {}
-    sources = _passive_source_urls(root_domain)
-    workers = max(1, min(8, len(sources)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_query_passive_source, source, url, root_domain, timeout): source
-            for source, url in sources.items()
-        }
-        for future in as_completed(futures):
-            source, hosts, error = future.result()
-            found_by_source[source] = hosts
-            if error:
-                errors[source] = error
-    for source in sources:
-        found_by_source.setdefault(source, [])
-    all_hosts = sorted({host for hosts in found_by_source.values() for host in hosts})
-    return {"root_domain": root_domain, "found": all_hosts, "sources": found_by_source, "errors": errors}
-
 
 def _active_subfinder_project_count() -> int:
     with _sf_lock:
@@ -189,7 +88,7 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
 def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
-    passive_command = "built-in passive sources: " + ", ".join(_passive_source_urls(root_domain).keys())
+    passive_command = "built-in passive sources: " + ", ".join(passive_source_urls(root_domain).keys())
     command_str = " && ".join(filter(None, [" ".join(cmd), passive_command]))
     subfinder_stdout = ""
     subfinder_stderr = ""

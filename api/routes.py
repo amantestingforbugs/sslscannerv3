@@ -611,7 +611,8 @@ def _subdomain_tool_public_state(sid: str) -> dict:
 
 
 def _subdomain_tool_worker(sid: str):
-    from subfinder.runner import _build_subfinder_cmd, _is_host_within_root, _normalize_host, _resolve_subfinder_bin, _HOST_RE, enumerate_passive_subdomains, _passive_source_urls
+    from subfinder.runner import _build_subfinder_cmd, _is_host_within_root, _normalize_host, _resolve_subfinder_bin, _HOST_RE
+    from subfinder.passive_sources import enumerate_passive_subdomains, passive_source_urls
 
     with _subdomain_tool_lock:
         state = _subdomain_tool_state.get(sid) or {}
@@ -630,8 +631,8 @@ def _subdomain_tool_worker(sid: str):
                 _subdomain_tool_processes[sid] = proc
             state = _subdomain_tool_state.get(sid)
             if state:
-                state.update({"status": "running", "command": " ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(_passive_source_urls(domain).keys()), "pid": proc.pid if proc else None})
-        db.subdomain_tool_scan_update(sid, status="running", command=" ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(_passive_source_urls(domain).keys()), pid=proc.pid if proc else None)
+                state.update({"status": "running", "command": " ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(passive_source_urls(domain).keys()), "pid": proc.pid if proc else None})
+        db.subdomain_tool_scan_update(sid, status="running", command=" ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(passive_source_urls(domain).keys()), pid=proc.pid if proc else None)
         broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
 
         def _read_stderr():
