@@ -728,6 +728,14 @@ def merge_subdomain_tool_results():
     domain = _normalize_domain(d.get("domain", ""))
     if not domain:
         return err("Enter a valid domain to merge results for, for example example.com")
+    active_scans = db.subdomain_tool_active_scans_for_domain(domain, ACTIVE_SUBDOMAIN_TOOL_STATUSES)
+    if active_scans:
+        active_labels = ", ".join(
+            f"{scan.get('scan_type') or 'scan'} {scan.get('id')} ({scan.get('status')})"
+            for scan in active_scans
+        )
+        return err(f"Stop active subdomain enumeration scans for {domain} before merging: {active_labels}", 409)
+
     subfinder_scan = db.subdomain_tool_scan_latest_for_domain(domain, "subfinder")
     passive_scan = db.subdomain_tool_scan_latest_for_domain(domain, "passive")
     if not subfinder_scan or not passive_scan:
@@ -756,10 +764,14 @@ def merge_subdomain_tool_results():
         finished_at=finished_at,
     )
     domain_scan_ids = db.subdomain_tool_scan_ids_for_domain(domain)
-    db.subdomain_tool_scans_delete_for_domain(domain, exclude_ids=(sid,))
+    db.subdomain_tool_scans_delete_for_domain(
+        domain,
+        exclude_ids=(sid,),
+        exclude_statuses=ACTIVE_SUBDOMAIN_TOOL_STATUSES,
+    )
     with _subdomain_tool_lock:
         for old_sid in domain_scan_ids:
-            if old_sid and old_sid != sid:
+            if old_sid and old_sid != sid and not db.subdomain_tool_scan_get(old_sid):
                 _subdomain_tool_state.pop(old_sid, None)
                 _subdomain_tool_threads.pop(old_sid, None)
                 _subdomain_tool_processes.pop(old_sid, None)
