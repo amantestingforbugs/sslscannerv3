@@ -1,4 +1,5 @@
 from pathlib import Path
+import urllib.error
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -124,6 +125,30 @@ def test_enumerate_passive_subdomains_deduplicates_sources(monkeypatch):
     assert result["sources"]["crt.sh"] == ["api.example.com", "cdn.example.com"]
     assert result["host_sources"]["api.example.com"] == ["HackerTarget", "crt.sh"]
     assert result["errors"] == {}
+
+
+def test_public_passive_provider_failures_are_suppressed(monkeypatch):
+    import subfinder.runner as runner
+
+    def failing_provider(domain, timeout):
+        raise urllib.error.HTTPError("https://source.example", 429, "Too Many Requests", None, None)
+
+    providers = [
+        runner.EnumerationProvider(
+            "Public Rate Limited Source",
+            "Passive DNS",
+            failing_provider,
+            report_errors=False,
+        ),
+        runner.EnumerationProvider("Working API", "Passive DNS", lambda domain, timeout: {"api.example.com"}),
+    ]
+    monkeypatch.setattr(runner, "_all_enumeration_providers", lambda: providers)
+
+    result = runner.enumerate_passive_subdomains("example.com")
+
+    assert result["found"] == ["api.example.com"]
+    assert result["errors"] == {}
+
 
 def test_enumerate_passive_subdomains_skips_missing_api_key_and_records_failures(monkeypatch):
     import subfinder.runner as runner
