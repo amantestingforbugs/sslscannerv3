@@ -255,7 +255,8 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
     from db.database import (
         project_get, project_hosts, subfinder_job_create, subfinder_job_finish,
         subfinder_job_error, subfinder_hosts_add_batch, subfinder_raw_result_add,
-        subfinder_raw_result_finish, subfinder_new_discoveries_add_batch
+        subfinder_raw_result_finish, subfinder_new_discoveries_add_batch,
+        subfinder_hosts_new_unscanned
     )
 
     project = project_get(project_id)
@@ -341,6 +342,11 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         discovered = sorted(set(discovered_all))
         new_count, new_hosts = subfinder_hosts_add_batch(project_id, discovered)
         subfinder_new_discoveries_add_batch(job_id, project_id, new_hosts)
+        # A previous project subdomain run may have discovered hosts but failed
+        # during the SSL phase.  Scan both this run's new hosts and any older
+        # unscanned subfinder hosts so rerunning the project integration can
+        # complete and produce certificate results instead of reporting no work.
+        scan_hosts = sorted(set(new_hosts) | set(subfinder_hosts_new_unscanned(project_id)))
 
         raw_dir = Path("data/subfinder_raw")
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -358,15 +364,25 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
         with _sf_lock:
             _sf_state[project_id]["new_count"] = new_count
-            _sf_state[project_id]["status"] = "ssl_scanning"
+            _sf_state[project_id]["status"] = "ssl_scanning" if scan_hosts else "done"
 
-        log.info("Subfinder: %d new hosts for '%s', triggering SSL scan",
-                 new_count, project["name"])
-        log_event("subfinder", "info", f"Discovered {new_count} new hosts", project_id=project_id, job_id=job_id, status="running")
+        log.info(
+            "Subfinder: %d new hosts (%d pending SSL scans) for '%s'",
+            new_count,
+            len(scan_hosts),
+            project["name"],
+        )
+        log_event(
+            "subfinder",
+            "info",
+            f"Discovered {new_count} new hosts; {len(scan_hosts)} pending SSL scans",
+            project_id=project_id,
+            job_id=job_id,
+            status="running" if scan_hosts else "idle",
+        )
 
-        # SSL scan only NEW hosts from this run
-        if new_hosts:
-            _ssl_scan_subfinder_hosts(project_id, new_hosts, job_id)
+        if scan_hosts:
+            _ssl_scan_subfinder_hosts(project_id, scan_hosts, job_id)
 
         with _sf_lock:
             _sf_state[project_id]["status"] = "done"
@@ -441,7 +457,12 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
                     if scan_id in _scan_state:
                         _scan_state[scan_id]["progress"] = done_count[0]
 
-    run_checker(hostnames, max_workers=200, progress_callback=on_result)
+    run_checker(
+        hostnames,
+        max_workers=200,
+        progress_callback=on_result,
+        collect_results=False,
+    )
 
     with lock:
         if result_batch:

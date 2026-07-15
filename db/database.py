@@ -595,10 +595,15 @@ def subfinder_hosts_add_batch(pid, hostnames):
     commit()
     return len(new_hosts), new_hosts
 
-def subfinder_hosts_new_unsscanned(pid):
+def subfinder_hosts_new_unscanned(pid):
     """Hostnames discovered by subfinder but not yet SSL-scanned."""
     return [r["hostname"] for r in x(
         "SELECT hostname FROM subfinder_hosts WHERE project_id=? AND ssl_scanned=0", (pid,))]
+
+
+def subfinder_hosts_new_unsscanned(pid):
+    """Backward-compatible alias for the misspelled helper name."""
+    return subfinder_hosts_new_unscanned(pid)
 
 def subfinder_hosts_mark_scanned(pid, hostnames):
     xm("UPDATE subfinder_hosts SET ssl_scanned=1 WHERE project_id=? AND hostname=?",
