@@ -563,10 +563,10 @@ tbody tr:last-child td{border-bottom:none}
 .hero-actions .btn-primary{background:#fff;color:#4338ca;border-color:#fff}
 .risk-orb{width:190px;height:190px;border-radius:50%;margin-left:auto;display:grid;place-items:center;background:conic-gradient(var(--green) var(--risk-deg,220deg),rgba(255,255,255,.22) 0);box-shadow:inset 0 0 0 14px rgba(255,255,255,.16),0 22px 60px rgba(0,0,0,.22)}
 .risk-orb-inner{width:132px;height:132px;border-radius:50%;background:rgba(15,23,42,.48);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.22)}
-.risk-score{font-size:36px;font-weight:850;line-height:1}.risk-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.75);margin-top:4px}
+.risk-score{font-size:36px;font-weight:850;line-height:1}.risk-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.75);margin-top:4px}.risk-help{max-width:260px;margin:14px 0 0 auto;padding:12px 14px;border:1px solid rgba(255,255,255,.24);border-radius:14px;background:rgba(15,23,42,.24);color:rgba(255,255,255,.86);font-size:12px;line-height:1.45;backdrop-filter:blur(14px)}.risk-help strong{display:block;color:#fff;font-size:13px;margin-bottom:3px}.risk-help span{color:#fff;font-weight:800}
 .dashboard-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.9fr);gap:18px;align-items:start}
 .insight-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}.insight-card{border:1px solid var(--border);background:var(--bg-raised);border-radius:16px;padding:14px}.insight-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;font-weight:800}.insight-value{font-size:18px;font-weight:800;margin-top:5px}.insight-hint{font-size:11px;color:var(--text-secondary);margin-top:4px}
-@media(max-width:1050px){.hero-grid,.dashboard-grid{grid-template-columns:1fr}.risk-orb{margin:8px auto 0}.insight-strip{grid-template-columns:1fr}}
+@media(max-width:1050px){.hero-grid,.dashboard-grid{grid-template-columns:1fr}.risk-orb{margin:8px auto 0}.risk-help{margin:14px auto 0}.insight-strip{grid-template-columns:1fr}}
 
 /* ════════════════════════════════════════════════════════════
    EMPTY STATE
@@ -791,10 +791,16 @@ tbody tr:last-child td{border-bottom:none}
               <button class="btn" onclick="nav('alerts')">Review alerts</button>
             </div>
           </div>
-          <div class="risk-orb" id="riskOrb">
-            <div class="risk-orb-inner">
-              <div class="risk-score" id="riskScore">—</div>
-              <div class="risk-label">Health score</div>
+          <div>
+            <div class="risk-orb" id="riskOrb" aria-describedby="riskScoreHelp">
+              <div class="risk-orb-inner">
+                <div class="risk-score" id="riskScore">—</div>
+                <div class="risk-label">Health score</div>
+              </div>
+            </div>
+            <div class="risk-help" id="riskScoreHelp">
+              <strong>What this score means</strong>
+              <span id="riskScoreStatus">100 is excellent</span>: starts at 100 and drops when watched domains have certificate mismatches or open alerts.
             </div>
           </div>
         </div>
@@ -1984,8 +1990,11 @@ function applyStat(s) {
   const riskOrb = document.getElementById('riskOrb');
   const insightCoverage = document.getElementById('insightCoverage');
   const insightAlerts = document.getElementById('insightAlerts');
+  const riskScoreStatus = document.getElementById('riskScoreStatus');
+  const scoreStatus = score >= 90 ? 'Excellent' : score >= 70 ? 'Needs attention' : 'High risk';
   if (riskScore) riskScore.textContent = score;
   if (riskOrb) riskOrb.style.setProperty('--risk-deg', `${Math.round(score * 3.6)}deg`);
+  if (riskScoreStatus) riskScoreStatus.textContent = watched ? `${scoreStatus} (${score}/100)` : 'No watched domains yet';
   if (insightCoverage) insightCoverage.textContent = watched ? `${coverageRaw}%` : 'No domains';
   if (insightAlerts) insightAlerts.textContent = openAlerts ? `${fmt(openAlerts)} open` : 'Clear';
 }
