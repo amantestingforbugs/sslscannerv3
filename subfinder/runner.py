@@ -14,6 +14,7 @@ How it works:
 import gzip
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -388,10 +389,13 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
     """Run SSL checks on newly discovered subfinder hosts and save results."""
     from db.database import (
         scan_create, scan_finish, results_batch_save,
-        subfinder_hosts_mark_scanned, alert_add, scan_progress
+        subfinder_hosts_mark_scanned, alert_add, scan_progress, alert_settings_get,
     )
     from core.ssl_checker import run_checker
-    from scheduler.runner import BATCH_SIZE, PROGRESS_UPDATE_EVERY, _scan_lock, _scan_state
+    from scheduler.runner import (
+        BATCH_SIZE, PROGRESS_UPDATE_EVERY, MAX_WORKERS, _build_alert_from_result,
+        _scan_lock, _scan_state,
+    )
 
     if not hostnames:
         return
@@ -408,52 +412,79 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
                 __import__("datetime").timezone.utc).isoformat()
         }
 
+    alert_settings = alert_settings_get()
+    expiring_threshold = max(1, min(365, int(alert_settings.get("minimum_days_left") or 30)))
+    ssl_workers = max(1, min(MAX_WORKERS, int(os.getenv("SUBFINDER_SSL_MAX_WORKERS", "50")), total))
+
     result_batch = []
+    alert_batch = []
     done_count = [0]
     lock = threading.Lock()
     scanned_hosts = []
 
     def on_result(done, total_inner, r):
         hostname = r.get("hostname", "")
-        scanned_hosts.append(hostname)
-
-        if r.get("is_mismatch") and not r.get("error"):
-            mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
-            alert_add(project_id, hostname, "SSL Mismatch",
-                      f"[Subfinder] CN '{r.get('cn','?')}' ≠ hostname", scan_id, mismatch_scope=mismatch_scope)
-        elif r.get("is_expired") and not r.get("error"):
-            alert_add(project_id, hostname, "Expired",
-                      f"[Subfinder] Expired {r.get('expiry','?')}", scan_id)
-        elif r.get("is_expiring_soon") and not r.get("error"):
-            alert_add(project_id, hostname, "Expiring Soon",
-                      f"[Subfinder] Expires {r.get('expiry','?')} ({r.get('days_left')}d)", scan_id)
+        alert = _build_alert_from_result(r, expiring_threshold)
 
         with lock:
+            if hostname:
+                scanned_hosts.append(hostname)
+            if alert:
+                alert_batch.append(alert)
             result_batch.append(r)
             done_count[0] += 1
+            cur = done_count[0]
             if len(result_batch) >= BATCH_SIZE:
                 batch = result_batch[:]
+                alerts = alert_batch[:]
                 result_batch.clear()
+                alert_batch.clear()
                 results_batch_save(scan_id, project_id, batch)
-            if done_count[0] % PROGRESS_UPDATE_EVERY == 0:
-                scan_progress(scan_id, done_count[0])
+                for h, issue, detail, scope in alerts:
+                    alert_add(project_id, h, issue, f"[Subfinder] {detail}", scan_id, mismatch_scope=scope)
+            if cur % PROGRESS_UPDATE_EVERY == 0:
+                scan_progress(scan_id, cur)
                 with _scan_lock:
                     if scan_id in _scan_state:
-                        _scan_state[scan_id]["progress"] = done_count[0]
+                        _scan_state[scan_id]["progress"] = cur
 
-    run_checker(hostnames, max_workers=200, progress_callback=on_result)
+    try:
+        run_checker(
+            hostnames,
+            max_workers=ssl_workers,
+            progress_callback=on_result,
+            collect_results=False,
+        )
 
-    with lock:
-        if result_batch:
-            results_batch_save(scan_id, project_id, result_batch)
+        with lock:
+            if result_batch:
+                results_batch_save(scan_id, project_id, result_batch)
+            for h, issue, detail, scope in alert_batch:
+                alert_add(project_id, h, issue, f"[Subfinder] {detail}", scan_id, mismatch_scope=scope)
 
-    scan_finish(scan_id)
-    subfinder_hosts_mark_scanned(project_id, scanned_hosts)
-
-    with _scan_lock:
-        if scan_id in _scan_state:
-            _scan_state[scan_id]["status"] = "done"
-            _scan_state[scan_id]["progress"] = total
+        scan_finish(scan_id)
+        subfinder_hosts_mark_scanned(project_id, scanned_hosts)
+        with _scan_lock:
+            if scan_id in _scan_state:
+                _scan_state[scan_id]["status"] = "done"
+                _scan_state[scan_id]["progress"] = done_count[0]
+                _scan_state[scan_id]["done"] = done_count[0]
+    except Exception as e:
+        log.exception("Subfinder SSL scan failed for project=%s job=%s: %s", project_id, job_id, e)
+        from db.database import scan_update
+        finished_at = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat()
+        scan_update(scan_id, status="error", finished_at=finished_at, done=done_count[0])
+        with _scan_lock:
+            if scan_id in _scan_state:
+                _scan_state[scan_id].update({
+                    "status": "error",
+                    "progress": done_count[0],
+                    "done": done_count[0],
+                    "error": str(e),
+                })
+        raise
 
 
 def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
@@ -515,8 +546,13 @@ class SubfinderScheduler:
             interval_min = max(10, min(30, int(p.get("subfinder_interval_minutes", 30) or 30)))
             interval_s = interval_min * 60
             if now_ts - self._last_run.get(pid, 0) >= interval_s:
-                self._last_run[pid] = now_ts
-                run_subfinder_async(pid, triggered_by="scheduler")
+                if run_subfinder_async(pid, triggered_by="scheduler"):
+                    self._last_run[pid] = now_ts
+                    # Start at most one scheduled enumeration per tick. Each job can
+                    # launch external subfinder processes and an SSL scan, so fanning
+                    # out across every enabled project at once can exhaust process
+                    # memory/threads and crash the web worker.
+                    break
 
 
 _sf_scheduler = SubfinderScheduler()
