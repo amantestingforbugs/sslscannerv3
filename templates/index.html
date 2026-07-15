@@ -537,6 +537,17 @@ tbody tr:last-child td{border-bottom:none}
   font-family:var(--mono);font-size:12px;color:var(--text-secondary);line-height:1.8;
 }
 
+.subdomain-tool-layout{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:14px;align-items:start}
+.subdomain-scan-list{display:flex;flex-direction:column;gap:8px}
+.subdomain-scan-card{width:100%;text-align:left;border:1px solid var(--border);background:var(--bg-raised);border-radius:12px;padding:12px;cursor:pointer;transition:border-color var(--transition),background var(--transition),transform var(--transition)}
+.subdomain-scan-card:hover{border-color:var(--accent);background:var(--bg-hover);transform:translateY(-1px)}
+.subdomain-scan-card.active{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.subdomain-scan-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.subdomain-scan-domain{font-weight:750;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.subdomain-scan-meta{font-size:11px;color:var(--text-muted);display:flex;gap:8px;flex-wrap:wrap}
+.subdomain-results-box{border:1px solid var(--border);border-radius:12px;background:var(--bg-base);overflow:hidden}
+@media(max-width:1000px){.subdomain-tool-layout{grid-template-columns:1fr}}
+
 /* ════════════════════════════════════════════════════════════
    EMPTY STATE
 ════════════════════════════════════════════════════════════ */
@@ -1229,20 +1240,35 @@ tbody tr:last-child td{border-bottom:none}
           <div class="progress-wrap"><div class="progress-bar" id="subdomain-tool-progress-fill" style="width:0%"></div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-body" style="padding-bottom:8px">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-            <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains.</div>
-            <div style="display:flex;gap:8px">
-              <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
-              <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
+      <div class="subdomain-tool-layout">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Completed Enumerations</span>
+            <button class="btn btn-sm" onclick="loadSubdomainToolHistory()">Refresh</button>
+          </div>
+          <div class="card-body">
+            <div id="subdomain-tool-history" class="subdomain-scan-list">
+              <div class="empty" style="padding:24px 12px"><div class="empty-title">No completed scans yet</div><p class="empty-desc">Run an enumeration, then click a completed scan to open its results.</p></div>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Subdomain</th></tr></thead>
-              <tbody id="subdomain-tool-body"><tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains enumerated yet.</td></tr></tbody>
-            </table>
+        </div>
+        <div class="card" id="subdomain-tool-results-card">
+          <div class="card-body" style="padding-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+              <div id="subdomain-tool-meta" style="font-size:12px;color:var(--text-secondary)">Enter a domain to find subdomains.</div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-sm" id="subdomain-tool-export-txt" onclick="exportSubdomainTool('txt')" disabled>⬇ TXT</button>
+                <button class="btn btn-sm" id="subdomain-tool-export-csv" onclick="exportSubdomainTool('csv')" disabled>⬇ CSV</button>
+              </div>
+            </div>
+            <div class="subdomain-results-box">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Subdomain</th></tr></thead>
+                  <tbody id="subdomain-tool-body"><tr><td style="text-align:center;padding:16px;color:var(--text-muted)">No subdomains enumerated yet. Click a completed scan to open its results.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1445,6 +1471,7 @@ let subdomainToolRows = [];
 let subdomainToolScanId = null;
 let subdomainToolStatus = "idle";
 let subdomainToolPollTimer = null;
+let subdomainToolHistory = [];
 let quickScanId = null;
 let quickRows = [];
 let quickRowsByHost = new Map();
@@ -1794,6 +1821,7 @@ function connectSSE() {
     subdomainToolRows = d.subdomains || subdomainToolRows;
     renderSubdomainToolRows(subdomainToolRows);
     updateSubdomainToolProgress(d);
+    if (!['queued','running','paused','stopping'].includes(d.status)) loadSubdomainToolHistory();
   });
 
   es.addEventListener('stats_update', e => {
@@ -2239,6 +2267,51 @@ async function openProject(pid, opts = {}) {
   } catch {}
 }
 
+function renderSubdomainToolHistory(scans=[]) {
+  const el = document.getElementById('subdomain-tool-history');
+  if (!el) return;
+  const completed = (scans || []).filter(scan => ['done','error','stopped'].includes(scan.status));
+  if (!completed.length) {
+    el.innerHTML = '<div class="empty" style="padding:24px 12px"><div class="empty-title">No completed scans yet</div><p class="empty-desc">Run an enumeration, then click a completed scan to open its results.</p></div>';
+    return;
+  }
+  el.innerHTML = completed.map(scan => {
+    const selected = (scan.id || scan.scan_id) === subdomainToolScanId ? ' active' : '';
+    const finished = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
+    return `<button class="subdomain-scan-card${selected}" onclick="openSubdomainToolScan('${scan.id || scan.scan_id}')">
+      <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${scan.status==='done'?'badge-ok':'badge-error'}">${esc(scan.status || 'done')}</span></div>
+      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(finished || '')}</span></div>
+    </button>`;
+  }).join('');
+}
+
+async function loadSubdomainToolHistory() {
+  try {
+    const { data } = await apiJSON('/api/tools/subdomains?limit=50');
+    subdomainToolHistory = data || [];
+    renderSubdomainToolHistory(subdomainToolHistory);
+  } catch (e) {
+    toast(e.message || 'Unable to load subdomain enumeration history', 'err');
+  }
+}
+
+async function openSubdomainToolScan(scanId) {
+  if (!scanId) return;
+  try {
+    const { data } = await apiJSON(`/api/tools/subdomains/${scanId}`);
+    subdomainToolScanId = data.id || data.scan_id;
+    subdomainToolRows = data.subdomains || [];
+    const input = document.getElementById('subdomain-tool-domain');
+    if (input && data.domain) input.value = data.domain;
+    renderSubdomainToolRows(subdomainToolRows);
+    updateSubdomainToolProgress(data);
+    renderSubdomainToolHistory(subdomainToolHistory);
+    document.getElementById('subdomain-tool-results-card')?.scrollIntoView({behavior:'smooth', block:'nearest'});
+  } catch (e) {
+    toast(e.message || 'Unable to open subdomain scan results', 'err');
+  }
+}
+
 function renderSubdomainToolRows(rows) {
   const body = document.getElementById('subdomain-tool-body');
   document.getElementById('subdomain-tool-export-txt').disabled = !rows.length || !subdomainToolScanId;
@@ -2270,6 +2343,7 @@ function updateSubdomainToolProgress(state={}) {
 
 async function initSubdomainToolPage() {
   document.getElementById('subdomain-tool-domain')?.focus();
+  loadSubdomainToolHistory();
   if (subdomainToolRows.length || subdomainToolScanId) return;
   try {
     const { data } = await apiJSON('/api/tools/subdomains/latest');
@@ -2280,10 +2354,12 @@ async function initSubdomainToolPage() {
     if (input && data.domain && !input.value) input.value = data.domain;
     renderSubdomainToolRows(subdomainToolRows);
     updateSubdomainToolProgress(data);
+    renderSubdomainToolHistory(subdomainToolHistory);
     if (['queued','running','paused','stopping'].includes(data.status)) {
       if (subdomainToolPollTimer) clearInterval(subdomainToolPollTimer);
       subdomainToolPollTimer = setInterval(pollSubdomainToolScan, 1500);
       await pollSubdomainToolScan();
+      loadSubdomainToolHistory();
     }
   } catch (e) {
     toast(e.message || 'Unable to load saved subdomain enumeration', 'err');
@@ -2301,6 +2377,7 @@ async function pollSubdomainToolScan() {
       clearInterval(subdomainToolPollTimer);
       subdomainToolPollTimer = null;
       document.getElementById('subdomain-tool-btn').disabled = false;
+      loadSubdomainToolHistory();
     }
   } catch (e) { toast(e.message || 'Unable to load subdomain scan status', 'err'); }
 }
