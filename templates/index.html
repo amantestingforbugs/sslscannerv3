@@ -1243,12 +1243,12 @@ tbody tr:last-child td{border-bottom:none}
       <div class="subdomain-tool-layout">
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Completed Enumerations</span>
+            <span class="card-title">Enumeration Tasks</span>
             <button class="btn btn-sm" onclick="loadSubdomainToolHistory()">Refresh</button>
           </div>
           <div class="card-body">
             <div id="subdomain-tool-history" class="subdomain-scan-list">
-              <div class="empty" style="padding:24px 12px"><div class="empty-title">No completed scans yet</div><p class="empty-desc">Run an enumeration, then click a completed scan to open its results.</p></div>
+              <div class="empty" style="padding:24px 12px"><div class="empty-title">No enumeration tasks yet</div><p class="empty-desc">Run an enumeration, then click a task to open its live results.</p></div>
             </div>
           </div>
         </div>
@@ -1806,6 +1806,7 @@ function connectSSE() {
 
   es.addEventListener('subdomain_tool_result', e => {
     const d = JSON.parse(e.data);
+    upsertSubdomainToolHistory({id:d.scan_id, scan_id:d.scan_id, status:d.status, total_found:d.total_found});
     if (d.scan_id !== subdomainToolScanId) return;
     if (d.subdomain && !subdomainToolRows.includes(d.subdomain)) {
       subdomainToolRows.push(d.subdomain);
@@ -1817,6 +1818,7 @@ function connectSSE() {
 
   es.addEventListener('subdomain_tool_update', e => {
     const d = JSON.parse(e.data);
+    upsertSubdomainToolHistory(d);
     if (d.id !== subdomainToolScanId) return;
     subdomainToolRows = d.subdomains || subdomainToolRows;
     renderSubdomainToolRows(subdomainToolRows);
@@ -2267,20 +2269,32 @@ async function openProject(pid, opts = {}) {
   } catch {}
 }
 
+function upsertSubdomainToolHistory(scan) {
+  if (!scan) return;
+  const id = scan.id || scan.scan_id;
+  if (!id) return;
+  const idx = subdomainToolHistory.findIndex(item => (item.id || item.scan_id) === id);
+  if (idx >= 0) subdomainToolHistory[idx] = {...subdomainToolHistory[idx], ...scan};
+  else subdomainToolHistory.unshift(scan);
+  renderSubdomainToolHistory(subdomainToolHistory);
+}
+
 function renderSubdomainToolHistory(scans=[]) {
   const el = document.getElementById('subdomain-tool-history');
   if (!el) return;
-  const completed = (scans || []).filter(scan => ['done','error','stopped'].includes(scan.status));
-  if (!completed.length) {
-    el.innerHTML = '<div class="empty" style="padding:24px 12px"><div class="empty-title">No completed scans yet</div><p class="empty-desc">Run an enumeration, then click a completed scan to open its results.</p></div>';
+  const tasks = scans || [];
+  if (!tasks.length) {
+    el.innerHTML = '<div class="empty" style="padding:24px 12px"><div class="empty-title">No enumeration tasks yet</div><p class="empty-desc">Run an enumeration, then click a task to open its live results.</p></div>';
     return;
   }
-  el.innerHTML = completed.map(scan => {
+  el.innerHTML = tasks.map(scan => {
     const selected = (scan.id || scan.scan_id) === subdomainToolScanId ? ' active' : '';
-    const finished = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
+    const active = ['queued','running','paused','stopping'].includes(scan.status);
+    const badgeClass = scan.status === 'done' ? 'badge-ok' : (scan.status === 'paused' ? 'badge-paused' : (active ? 'badge-running' : 'badge-error'));
+    const timestamp = scan.finished_at ? new Date(scan.finished_at).toLocaleString() : rel(scan.started_at);
     return `<button class="subdomain-scan-card${selected}" onclick="openSubdomainToolScan('${scan.id || scan.scan_id}')">
-      <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${scan.status==='done'?'badge-ok':'badge-error'}">${esc(scan.status || 'done')}</span></div>
-      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${esc(finished || '')}</span></div>
+      <div class="subdomain-scan-top"><span class="subdomain-scan-domain">${esc(scan.domain || 'Unknown domain')}</span><span class="badge ${badgeClass}">${esc(scan.status || 'queued')}</span></div>
+      <div class="subdomain-scan-meta"><span>${fmt(scan.total_found || 0)} found</span><span>${active ? 'Live' : 'Finished'}</span><span>${esc(timestamp || '')}</span></div>
     </button>`;
   }).join('');
 }
@@ -2337,7 +2351,7 @@ function updateSubdomainToolProgress(state={}) {
   pauseBtn.disabled = !['running','paused'].includes(subdomainToolStatus);
   pauseBtn.textContent = subdomainToolStatus === 'paused' ? '▶ Resume' : '⏸ Pause';
   stopBtn.disabled = !active || subdomainToolStatus === 'stopping';
-  document.getElementById('subdomain-tool-btn').disabled = active;
+  document.getElementById('subdomain-tool-btn').disabled = false;
   document.getElementById('subdomain-tool-meta').textContent = state.error || state.stderr || (state.domain ? `Domain: ${state.domain} · Status: ${subdomainToolStatus}` : 'Enter a domain to find subdomains.');
 }
 
@@ -2376,7 +2390,6 @@ async function pollSubdomainToolScan() {
     if (!['queued','running','paused','stopping'].includes(data?.status)) {
       clearInterval(subdomainToolPollTimer);
       subdomainToolPollTimer = null;
-      document.getElementById('subdomain-tool-btn').disabled = false;
       loadSubdomainToolHistory();
     }
   } catch (e) { toast(e.message || 'Unable to load subdomain scan status', 'err'); }
@@ -2395,6 +2408,7 @@ async function runSubdomainEnumeration() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }),
     });
     subdomainToolScanId = data.scan_id;
+    upsertSubdomainToolHistory(data);
     updateSubdomainToolProgress(data);
     if (!data?.binary_available) toast('Subfinder binary not found on server', 'err');
     subdomainToolPollTimer = setInterval(pollSubdomainToolScan, 1500);
