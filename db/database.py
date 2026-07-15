@@ -658,7 +658,30 @@ def subfinder_new_discoveries_add_batch(job_id, pid, hostnames):
 
 def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
     search_like = f"%{search.lower()}%"
-    if mode == "latest":
+    if mode in {"initial_job", "first_job"}:
+        where = (
+            "WHERE h.project_id=? AND EXISTS ("
+            "SELECT 1 FROM subfinder_new_discoveries n "
+            "WHERE n.project_id=h.project_id AND n.hostname=h.hostname "
+            "AND n.job_id=(SELECT j.id FROM subfinder_jobs j WHERE j.project_id=? ORDER BY j.started_at ASC LIMIT 1)"
+            ")"
+        )
+        params = [pid, pid]
+    elif mode == "latest_scheduled":
+        where = (
+            "WHERE h.project_id=? AND EXISTS ("
+            "SELECT 1 FROM subfinder_new_discoveries n "
+            "WHERE n.project_id=h.project_id AND n.hostname=h.hostname "
+            "AND n.job_id=("
+            "SELECT j.id FROM subfinder_jobs j "
+            "WHERE j.project_id=? AND j.triggered_by='scheduler' "
+            "AND j.started_at > COALESCE((SELECT first_j.started_at FROM subfinder_jobs first_j WHERE first_j.project_id=? ORDER BY first_j.started_at ASC LIMIT 1), '') "
+            "ORDER BY j.started_at DESC LIMIT 1"
+            ")"
+            ")"
+        )
+        params = [pid, pid, pid]
+    elif mode in {"latest", "new"}:
         where = "WHERE h.project_id=? AND EXISTS (SELECT 1 FROM subfinder_new_discoveries n WHERE n.project_id=h.project_id AND n.hostname=h.hostname)"
         params = [pid]
     elif mode == "last_job":
