@@ -614,16 +614,16 @@ tbody tr:last-child td{border-bottom:none}
     </div>
   </div>
 
-  <div class="sidebar-status-card" aria-label="Monitoring health summary">
+  <div class="sidebar-status-card" aria-label="Certificate coverage summary">
     <div class="status-card-top">
       <div>
-        <div class="status-kicker">Security posture</div>
-        <div class="status-label">Live certificate watch</div>
+        <div class="status-kicker">Coverage snapshot</div>
+        <div class="status-label">Domains under watch</div>
       </div>
-      <div class="status-bubble">76</div>
+      <div class="status-bubble" id="sideWatched">—</div>
     </div>
-    <div class="status-meter"><span></span></div>
-    <div class="status-card-bottom"><span>Healthy</span><span>Auto-refresh</span></div>
+    <div class="status-meter"><span id="sideMeter"></span></div>
+    <div class="status-card-bottom"><span>Tracked domains</span><span><span id="sideAlerts">—</span> alerts</span></div>
   </div>
 
   <nav class="nav">
@@ -1748,6 +1748,18 @@ function applyStat(s) {
   document.getElementById('s-ok').textContent = fmt(s.ok);
   document.getElementById('s-mis').textContent = fmt(s.mismatches);
   document.getElementById('s-expg').textContent = fmt(s.unseen_alerts ?? s.mismatches);
+  const sideWatched = document.getElementById('sideWatched');
+  const sideAlerts = document.getElementById('sideAlerts');
+  const sideMeter = document.getElementById('sideMeter');
+  const watched = Number(totalDomains || 0);
+  const openAlerts = Number(s.unseen_alerts ?? s.mismatches ?? 0);
+  if (sideWatched) sideWatched.textContent = watched ? fmt(watched) : '0';
+  if (sideAlerts) sideAlerts.textContent = fmt(openAlerts);
+  if (sideMeter) {
+    const activeDomains = Number(s.ok || 0);
+    const coverage = watched > 0 ? Math.max(8, Math.min(100, Math.round((activeDomains / watched) * 100))) : 0;
+    sideMeter.style.width = `${coverage}%`;
+  }
 }
 
 async function loadDash() {
