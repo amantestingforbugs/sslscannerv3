@@ -163,6 +163,7 @@ def init_db():
         command TEXT DEFAULT '',
         pid INTEGER,
         total_found INTEGER DEFAULT 0,
+        scan_type TEXT DEFAULT 'subfinder',
         subdomains TEXT DEFAULT '[]',
         exit_code INTEGER,
         stderr TEXT DEFAULT '',
@@ -216,6 +217,11 @@ def init_db():
         pass
     try:
         x("ALTER TABLE subfinder_raw_results ADD COLUMN stderr_z BLOB")
+        commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        x("ALTER TABLE subdomain_tool_scans ADD COLUMN scan_type TEXT DEFAULT 'subfinder'")
         commit()
     except sqlite3.OperationalError:
         pass
@@ -737,18 +743,19 @@ def subfinder_discoveries(pid, page=1, per_page=200, search="", mode="all"):
 
 # ── Standalone Subdomain Enumeration Tool ─────────────────────────────────────
 
-def subdomain_tool_scan_create(sid, domain):
+def subdomain_tool_scan_create(sid, domain, scan_type="subfinder"):
     n = now()
+    scan_type = scan_type if scan_type in {"subfinder", "passive"} else "subfinder"
     x(
-        "INSERT INTO subdomain_tool_scans(id,domain,status,total_found,subdomains,started_at,updated_at) "
-        "VALUES(?,?,?,?,?,?,?)",
-        (sid, domain, "queued", 0, "[]", n, n),
+        "INSERT INTO subdomain_tool_scans(id,domain,status,total_found,scan_type,subdomains,started_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (sid, domain, "queued", 0, scan_type, "[]", n, n),
     )
     commit()
 
 
 def subdomain_tool_scan_update(sid, **kw):
-    allowed = {"status", "command", "pid", "total_found", "subdomains", "exit_code", "stderr", "error", "finished_at"}
+    allowed = {"status", "command", "pid", "total_found", "scan_type", "subdomains", "exit_code", "stderr", "error", "finished_at"}
     data = {k: v for k, v in kw.items() if k in allowed}
     if "subdomains" in data:
         data["subdomains"] = json.dumps(sorted({h for h in data["subdomains"] if h}), separators=(",", ":"))

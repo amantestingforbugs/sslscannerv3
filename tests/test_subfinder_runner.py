@@ -169,3 +169,24 @@ def test_enumerate_passive_subdomains_skips_missing_api_key_and_records_failures
     assert result["found"] == ["ok.example.com"]
     assert result["skipped"] == ["Optional API"]
     assert "Failing API" in result["errors"]
+
+
+def test_run_subfinder_for_root_uses_subfinder_only(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(runner, "_resolve_subfinder_bin", lambda: "/bin/subfinder")
+    monkeypatch.setattr(runner, "_subfinder_supports_all_flag", lambda _bin: False)
+    monkeypatch.setattr(runner, "enumerate_passive_subdomains", lambda _domain: (_ for _ in ()).throw(AssertionError("passive scan should not run")))
+
+    class Result:
+        stdout = "api.example.com\n"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(runner.subprocess, "run", lambda *args, **kwargs: Result())
+
+    result = runner._run_subfinder_for_root("example.com")
+
+    assert result["found"] == ["api.example.com"]
+    assert result["sources"] == {"api.example.com": ["Subfinder"]}
+    assert "built-in passive sources" not in result["command"]

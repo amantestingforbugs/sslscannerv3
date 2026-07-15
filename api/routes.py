@@ -616,8 +616,14 @@ def _subdomain_tool_worker(sid: str):
     with _subdomain_tool_lock:
         state = _subdomain_tool_state.get(sid) or {}
         domain = state.get("domain", "")
+        scan_type = state.get("scan_type") or "subfinder"
     subfinder_bin = _resolve_subfinder_bin()
-    cmd = _build_subfinder_cmd(subfinder_bin, domain) if subfinder_bin else []
+    cmd = _build_subfinder_cmd(subfinder_bin, domain) if scan_type == "subfinder" and subfinder_bin else []
+    command = " ".join(cmd) if cmd else (
+        "built-in passive sources: " + ", ".join(_passive_source_urls(domain).keys())
+        if scan_type == "passive" else
+        "subfinder binary not found"
+    )
     found: set[str] = set()
     stderr_lines: list[str] = []
     stderr_text = ""
@@ -630,9 +636,22 @@ def _subdomain_tool_worker(sid: str):
                 _subdomain_tool_processes[sid] = proc
             state = _subdomain_tool_state.get(sid)
             if state:
-                state.update({"status": "running", "command": " ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(_passive_source_urls(domain).keys()), "pid": proc.pid if proc else None})
-        db.subdomain_tool_scan_update(sid, status="running", command=" ".join(cmd) if cmd else "built-in passive sources: " + ", ".join(_passive_source_urls(domain).keys()), pid=proc.pid if proc else None)
+                state.update({"status": "running", "command": command, "pid": proc.pid if proc else None})
+        db.subdomain_tool_scan_update(sid, status="running", command=command, pid=proc.pid if proc else None)
         broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
+
+        def _publish_host(host: str, status: str = "running"):
+            if host in found:
+                return
+            found.add(host)
+            with _subdomain_tool_lock:
+                state = _subdomain_tool_state.get(sid)
+                if state:
+                    state["subdomains"] = sorted(found)
+                    state["total_found"] = len(found)
+                    state["updated_at"] = db.now()
+            db.subdomain_tool_scan_update(sid, subdomains=sorted(found), total_found=len(found))
+            broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": status})
 
         def _read_stderr():
             if proc is None or proc.stderr is None:
@@ -643,34 +662,24 @@ def _subdomain_tool_worker(sid: str):
         stderr_thread = threading.Thread(target=_read_stderr, daemon=True, name=f"subdomain-tool-stderr-{sid[:8]}")
         stderr_thread.start()
 
-        if proc and proc.stdout is not None:
-            for line in proc.stdout:
-                host = _normalize_host(line.strip())
-                if host and _HOST_RE.match(host) and _is_host_within_root(host, domain) and host not in found:
-                    found.add(host)
-                    with _subdomain_tool_lock:
-                        state = _subdomain_tool_state.get(sid)
-                        if not state:
-                            continue
-                        state["subdomains"] = sorted(found)
-                        state["total_found"] = len(found)
-                        state["updated_at"] = db.now()
-                        status = state.get("status")
-                    db.subdomain_tool_scan_update(sid, subdomains=sorted(found), total_found=len(found))
-                    broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": status})
-            proc.wait(timeout=2)
-            stderr_thread.join(timeout=1)
-        passive = enumerate_passive_subdomains(domain)
-        for host in passive.get("found") or []:
-            if host not in found:
-                found.add(host)
-                db.subdomain_tool_scan_update(sid, subdomains=sorted(found), total_found=len(found))
-                broadcast("subdomain_tool_result", {"scan_id": sid, "subdomain": host, "total_found": len(found), "status": "running"})
-        # Passive provider failures are non-fatal. Keep the scan UI focused on
-        # discovered results instead of showing transient public-source errors
-        # (rate limits, removed endpoints, or source timeouts) as scan stderr.
+        if scan_type == "subfinder":
+            if proc and proc.stdout is not None:
+                for line in proc.stdout:
+                    host = _normalize_host(line.strip())
+                    if host and _HOST_RE.match(host) and _is_host_within_root(host, domain):
+                        _publish_host(host)
+                proc.wait(timeout=2)
+                stderr_thread.join(timeout=1)
+            else:
+                stderr_lines.append("subfinder binary not found in PATH or /usr/local/bin/subfinder")
+        else:
+            passive = enumerate_passive_subdomains(domain)
+            for host in passive.get("found") or []:
+                _publish_host(host)
+            # Passive provider failures are non-fatal. Keep the scan UI focused on
+            # discovered results instead of showing transient public-source errors.
         stderr_text = "".join(stderr_lines)
-        code = proc.returncode if proc else 0
+        code = proc.returncode if proc else (0 if scan_type == "passive" else 127)
         with _subdomain_tool_lock:
             state = _subdomain_tool_state.get(sid)
             current_status = state.get("status") if state else ""
@@ -692,7 +701,6 @@ def _subdomain_tool_worker(sid: str):
             _subdomain_tool_processes.pop(sid, None)
         broadcast("subdomain_tool_update", _subdomain_tool_public_state(sid))
 
-
 @api.post("/tools/subdomains")
 def enumerate_subdomains_tool():
     d = request.json or {}
@@ -700,7 +708,10 @@ def enumerate_subdomains_tool():
     if not domain:
         return err("Enter a valid domain, for example example.com")
     sid = db.uid()
-    db.subdomain_tool_scan_create(sid, domain)
+    scan_type = (d.get("scan_type") or d.get("source") or "subfinder").strip().lower()
+    if scan_type not in {"subfinder", "passive"}:
+        return err("scan_type must be subfinder or passive")
+    db.subdomain_tool_scan_create(sid, domain, scan_type=scan_type)
     with _subdomain_tool_lock:
         _subdomain_tool_state[sid] = db.subdomain_tool_scan_get(sid)
     th = threading.Thread(target=_subdomain_tool_worker, args=(sid,), daemon=True, name=f"subdomain-tool-{sid[:8]}")
@@ -708,7 +719,7 @@ def enumerate_subdomains_tool():
         _subdomain_tool_threads[sid] = th
     th.start()
     from subfinder.runner import subfinder_available
-    return ok({"scan_id": sid, "domain": domain, "status": "queued", "binary_available": subfinder_available()})
+    return ok({"scan_id": sid, "domain": domain, "scan_type": scan_type, "status": "queued", "binary_available": subfinder_available()})
 
 
 @api.get("/tools/subdomains/latest")
