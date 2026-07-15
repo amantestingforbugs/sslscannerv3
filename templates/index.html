@@ -1033,16 +1033,20 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
-      <!-- Scan history -->
+      <!-- Completed scan history -->
       <div class="card">
-        <div class="card-header"><span class="card-title">Scan History</span></div>
-        <div id="scan-history"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No scans yet</div></div></div>
+        <div class="card-header">
+          <span class="card-title">Completed Scans</span>
+          <span style="font-size:12px;color:var(--text-muted)">Click a completed scan to reveal its saved results below.</span>
+        </div>
+        <div id="scan-history"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No completed scans yet</div></div></div>
       </div>
 
       <!-- Results -->
       <div class="card" id="results-card" style="display:none">
         <div class="card-header">
-          <span class="card-title" id="results-title">Results</span>
+          <span class="card-title" id="results-title">Completed Scan Results</span>
+          <span style="font-size:12px;color:var(--text-muted)" id="results-subtitle"></span>
         </div>
         <div class="filter-tabs" id="result-tabs">
           <div class="filter-tab active" onclick="loadResults('all',this)">All</div>
@@ -2216,10 +2220,8 @@ async function openProject(pid, opts = {}) {
       `${fmt(p.host_count)} hosts · scan every ${p.scan_interval_minutes}min · subfinder every ${p.subfinder_interval_minutes}min`;
     document.getElementById('host-count').textContent = fmt(p.host_count);
     loadHistory(pid);
-    if (p.latest_scan?.status==='done') {
-      curSid = p.latest_scan.id;
-      showResults(p.latest_scan);
-    }
+    document.getElementById('results-card').style.display='none';
+    curSid = null;
     if (p.latest_scan?.status==='running') {
       curSid = p.latest_scan.id;
       activeScanStatus = 'running';
@@ -2445,12 +2447,12 @@ function startPoll() {
       if (run) updateScanProgress(run);
       if (!run && done) {
         clearInterval(scanPollTimer);
-        curSid = done.id;
+        curSid = null;
         document.getElementById('scan-prog-card').style.display='none';
-        showResults(done);
+        document.getElementById('results-card').style.display='none';
         loadHistory(curPid);
         pollBadge();
-        toast(`Scan complete — ${fmt(done.mismatches)} mismatch(es)`, done.mismatches>0?'err':'ok');
+        toast(`Scan complete — ${fmt(done.mismatches)} mismatch(es). Click it in Completed Scans to view saved results.`, done.mismatches>0?'err':'ok');
       }
       if (!run && stopped) {
         clearInterval(scanPollTimer);
@@ -2526,7 +2528,12 @@ async function stopActiveScan() {
 // RESULTS (paginated + sortable + searchable)
 // ════════════════════════════════════════════════════════════
 function showResults(scan) {
+  if (!scan || scan.status !== 'done') return;
   document.getElementById('results-card').style.display='';
+  document.getElementById('results-title').textContent = 'Completed Scan Results';
+  document.getElementById('results-subtitle').textContent = scan.finished_at ? `Finished ${new Date(scan.finished_at).toLocaleString()}` : '';
+  document.getElementById('res-search').value = '';
+  document.querySelectorAll('#result-tabs .filter-tab').forEach((t, idx)=>t.classList.toggle('active', idx===0));
   document.getElementById('results-stats').innerHTML=`
     <div class="scan-stat"><div class="scan-stat-val" style="color:var(--accent)">${fmt(scan.total)}</div><div class="scan-stat-lbl">Total</div></div>
     <div class="scan-stat"><div class="scan-stat-val" style="color:var(--green)">${fmt(scan.ok)}</div><div class="scan-stat-lbl">Valid</div></div>
@@ -2634,25 +2641,27 @@ async function loadHistory(pid) {
   try {
     const { data: scans } = await fetch(`/api/projects/${pid}/scans`).then(r=>r.json());
     const el = document.getElementById('scan-history');
-    if (!scans?.length) {
-      el.innerHTML='<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No scans yet</div></div>';
+    const completed = (scans || []).filter(s => s.status === 'done');
+    if (!completed.length) {
+      el.innerHTML='<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No completed scans yet</div><p class="empty-desc">Completed scans will be preserved here. Click one to reveal its saved result table.</p></div>';
       return;
     }
-    el.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Status</th><th>Total</th><th>Mismatches</th><th>Expired</th><th>Trigger</th><th></th></tr></thead><tbody>`+
-      scans.map(s=>`<tr>
+    el.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Completed</th><th>Total</th><th>Mismatches</th><th>Expired</th><th>Trigger</th><th></th></tr></thead><tbody>`+
+      completed.map(s=>`<tr class="completed-scan-row" onclick="viewScan('${s.id}',${JSON.stringify(s).replace(/"/g,'&quot;')})" style="cursor:pointer">
         <td style="font-size:12px;color:var(--text-secondary)">${s.finished_at?new Date(s.finished_at).toLocaleString():rel(s.started_at)}</td>
-        <td><span class="badge ${s.status==='done'?'badge-done':s.status==='running'?'badge-running':s.status==='paused'?'badge-paused':s.status==='stopped'?'badge-stopped':'badge-error'}">${s.status}</span></td>
         <td>${fmt(s.total)}</td>
         <td style="color:${s.mismatches>0?'var(--red)':'var(--text-primary)'}">${fmt(s.mismatches)}</td>
         <td style="color:${s.expired>0?'var(--orange)':'var(--text-primary)'}">${fmt(s.expired)}</td>
         <td style="font-size:11px;color:var(--text-muted)">${s.triggered_by}</td>
-        <td><button class="btn btn-sm" onclick="viewScan('${s.id}',${JSON.stringify(s).replace(/"/g,'&quot;')})">View</button></td>
+        <td><button class="btn btn-sm" onclick="event.stopPropagation();viewScan('${s.id}',${JSON.stringify(s).replace(/"/g,'&quot;')})">Reveal Results</button></td>
       </tr>`).join('')+`</tbody></table></div>`;
   } catch {}
 }
 
 function viewScan(sid, scan) {
-  curSid=sid; showResults(scan);
+  if (!scan || scan.status !== 'done') return;
+  curSid=sid;
+  showResults(scan);
   document.getElementById('results-card').scrollIntoView({behavior:'smooth'});
 }
 
