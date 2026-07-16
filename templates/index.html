@@ -3537,7 +3537,7 @@ async function runSfNow() {
   if (!sfCurPid) { toast('Please select a project before running scan','err'); return; }
   const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
-  toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found — using passive sources only)`,'ok');
+  toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found)`,'ok');
   setTimeout(refreshSfPanel, 2000);
 }
 
