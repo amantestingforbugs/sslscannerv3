@@ -542,19 +542,25 @@ def list_logs():
 
 @api.post("/projects/<pid>/subfinder/run")
 def run_subfinder(pid):
-    from subfinder.runner import run_subfinder_async, subfinder_available
+    from subfinder.runner import run_subfinder_async, subfinder_available, _extract_project_root_domains
     if not pid or pid in {"undefined", "null"}:
         return err("Please select a project before running scan")
     p = db.project_get(pid)
     if not p: return err("Project not found", 404)
-    if not db.project_hosts(pid):
+    hosts = db.project_hosts(pid)
+    if not hosts:
         return err("Add a host list first so subfinder knows which root domains to enumerate")
+    root_domains = _extract_project_root_domains(hosts)
+    if not root_domains:
+        return err("No valid root domains could be extracted from this project host list")
     started = run_subfinder_async(pid, triggered_by="manual")
     if not started:
         return err("Subfinder already running for this project")
     return ok({
         "message": "Subfinder started",
-        "binary_found": subfinder_available()
+        "binary_found": subfinder_available(),
+        "root_domains": root_domains,
+        "root_domain_count": len(root_domains)
     })
 
 
