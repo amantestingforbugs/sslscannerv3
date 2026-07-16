@@ -441,22 +441,31 @@ def _normalize_host(host: str) -> str:
     h = (host or "").strip().lower().rstrip(".")
     if not h:
         return ""
-    if "://" in h:
-        try:
-            parsed = urlparse(h)
-            if parsed.hostname:
-                h = parsed.hostname
-            else:
-                h = h.split("://", 1)[1].split("/", 1)[0]
-        except Exception:
+
+    # Project host lists often contain full URLs copied from discovery output.
+    # urlparse only treats values as URLs when a scheme is present, so also
+    # support schemeless entries such as example.com/path or user@example.com:8443.
+    parse_target = h if "://" in h else f"//{h}"
+    try:
+        parsed = urlparse(parse_target)
+        if parsed.hostname:
+            h = parsed.hostname
+        elif "://" in h:
             h = h.split("://", 1)[1].split("/", 1)[0]
+    except Exception:
+        if "://" in h:
+            h = h.split("://", 1)[1].split("/", 1)[0]
+
+    h = h.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if "@" in h:
+        h = h.rsplit("@", 1)[1]
     if h.startswith("*."):
         h = h[2:]
     if h.startswith("[") and "]" in h:
         h = h[1:h.index("]")]
     elif ":" in h:
         h = h.split(":", 1)[0]
-    return h
+    return h.rstrip(".")
 
 
 def _registrable_domain(host: str) -> Optional[str]:
@@ -778,6 +787,50 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
                 _scan_state[scan_id]["status"] = "error"
         raise
 
+
+
+def projects_with_root_domains() -> List[Dict[str, object]]:
+    """Return projects that have host-list entries which resolve to root domains."""
+    from db.database import project_hosts, project_list
+
+    projects: List[Dict[str, object]] = []
+    for project in project_list():
+        roots = _extract_project_root_domains(project_hosts(project["id"]))
+        if roots:
+            item = dict(project)
+            item["root_domains"] = roots
+            projects.append(item)
+    return projects
+
+
+def run_subfinder_for_all_projects_async(triggered_by: str = "manual") -> int:
+    """Run project subfinder integrations for every project with root domains."""
+    candidates = projects_with_root_domains()
+    if not candidates:
+        return 0
+    with _sf_lock:
+        active_count = sum(
+            1 for state in _sf_state.values()
+            if state.get("status") in ACTIVE_SUBFINDER_STATUSES
+        )
+        if active_count >= MAX_CONCURRENT_SUBFINDER_PROJECTS:
+            return 0
+        for project in candidates:
+            _sf_state[project["id"]] = {"status": "queued", "job_id": None, "new_count": 0}
+
+    def worker():
+        for project in candidates:
+            pid = project["id"]
+            try:
+                run_subfinder_for_project(pid, triggered_by=triggered_by)
+            except Exception:
+                log.exception("Subfinder all-project run failed for project=%s", pid)
+                with _sf_lock:
+                    _sf_state[pid] = {"status": "error", "job_id": None, "new_count": 0}
+
+    t = threading.Thread(target=worker, daemon=True, name="sf-all-projects")
+    t.start()
+    return len(candidates)
 
 def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
     """Start subfinder pipeline in background thread. Returns False if at capacity."""
