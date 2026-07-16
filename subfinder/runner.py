@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+import select
 import socket
 import ssl
 import subprocess
@@ -357,7 +358,7 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
     return cmd
 
 
-def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
+def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id: Optional[str] = None) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
     subfinder_command = " ".join(cmd) if cmd else "subfinder binary not found"
@@ -368,20 +369,74 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             return [], "", "subfinder binary not found in PATH or /usr/local/bin/subfinder", 127, "error"
         log.info("Subfinder start (bin=%s): %s", subfinder_bin, " ".join(cmd))
         log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=" ".join(cmd), status="running")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        stdout = result.stdout or ""
-        raw_lines = [ln.strip().lower() for ln in stdout.splitlines() if ln.strip()]
-        found = sorted(
-            {
-                candidate
-                for ln in raw_lines
-                for candidate in [_normalize_host(ln)]
-                if candidate
-                and _HOST_RE.match(candidate)
-                and _is_host_within_root(candidate, root_domain)
-            }
-        )
-        return found, stdout, result.stderr or "", result.returncode, "done" if result.returncode == 0 else "error"
+        if not live_result_id:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            stdout = result.stdout or ""
+            raw_lines = [ln.strip().lower() for ln in stdout.splitlines() if ln.strip()]
+            found = sorted(
+                {
+                    candidate
+                    for ln in raw_lines
+                    for candidate in [_normalize_host(ln)]
+                    if candidate
+                    and _HOST_RE.match(candidate)
+                    and _is_host_within_root(candidate, root_domain)
+                }
+            )
+            return found, stdout, result.stderr or "", result.returncode, "done" if result.returncode == 0 else "error"
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        found_set: Set[str] = set()
+        stdout_lines: List[str] = []
+        last_live_update = 0.0
+
+        def flush_live(force: bool = False):
+            nonlocal last_live_update
+            if not live_result_id:
+                return
+            current = time.monotonic()
+            if not force and current - last_live_update < 0.75:
+                return
+            from db import database as db
+            db.subfinder_raw_result_update_live(live_result_id, "\n".join(sorted(found_set)), status="running")
+            last_live_update = current
+
+        try:
+            assert proc.stdout is not None
+            deadline = time.monotonic() + timeout
+            stdout_fd = proc.stdout.fileno()
+            while True:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                ready, _, _ = select.select([stdout_fd], [], [], 0.25)
+                if ready:
+                    line = proc.stdout.readline()
+                    if line:
+                        stdout_lines.append(line)
+                        candidate = _normalize_host(line.strip().lower())
+                        if candidate and _HOST_RE.match(candidate) and _is_host_within_root(candidate, root_domain):
+                            before = len(found_set)
+                            found_set.add(candidate)
+                            if len(found_set) != before:
+                                flush_live()
+                    elif proc.poll() is not None:
+                        break
+                elif proc.poll() is not None:
+                    for line in proc.stdout.readlines():
+                        stdout_lines.append(line)
+                        candidate = _normalize_host(line.strip().lower())
+                        if candidate and _HOST_RE.match(candidate) and _is_host_within_root(candidate, root_domain):
+                            found_set.add(candidate)
+                    break
+            proc.wait(timeout=1)
+        finally:
+            flush_live(force=True)
+
+        stderr = proc.stderr.read() if proc.stderr else ""
+        found = sorted(found_set)
+        stdout = "".join(stdout_lines)
+        return found, stdout, stderr or "", proc.returncode, "done" if proc.returncode == 0 else "error"
 
     def run_passive() -> Dict[str, object]:
         return enumerate_passive_subdomains(root_domain, timeout=PASSIVE_SOURCE_TIMEOUT)
@@ -635,7 +690,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         }
         workers = max(1, min(8, len(root_domains)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_run_subfinder_for_root, root_domain): root_domain for root_domain in root_domains}
+            futures = {pool.submit(_run_subfinder_for_root, root_domain, 180, raw_ids[root_domain]): root_domain for root_domain in root_domains}
             for future in as_completed(futures):
                 root_domain = futures[future]
                 run = future.result()
