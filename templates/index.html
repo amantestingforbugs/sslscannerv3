@@ -1566,6 +1566,8 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
           </div>
           <div class="card-body">
             <div id="sf-status-bar" style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">Status: idle</div>
+            <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:6px">Extracted root domains</div>
+            <div id="sf-root-domains" style="display:flex;flex-wrap:wrap;gap:6px"><span class="badge">Select a project</span></div>
           </div>
         </div>
 
@@ -1574,6 +1576,11 @@ tbody tr{content-visibility:auto;contain-intrinsic-size:46px}
           <div id="sf-jobs"><div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div></div>
         </div>
 
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Subfinder Run Results</span></div>
+          <div id="sf-raw-results"><div class="empty"><div class="empty-icon">📄</div><div class="empty-title">No run results yet</div></div></div>
+        </div>
 
         <div class="card">
           <div class="card-header">
@@ -3387,10 +3394,11 @@ async function loadSfProject() {
 async function refreshSfPanel() {
   if (!sfCurPid) return;
   try {
-    const [{ data: st }, { data: hostsData }, { data: proj }] = await Promise.all([
+    const [{ data: st }, { data: hostsData }, { data: proj }, { data: rawResults }] = await Promise.all([
       apiJSON(`/api/projects/${sfCurPid}/subfinder/status`),
       apiJSON(`/api/projects/${sfCurPid}/subfinder/hosts?page=${sfCurPage}&per_page=250`),
       apiJSON(`/api/projects/${sfCurPid}`),
+      apiJSON(`/api/projects/${sfCurPid}/subfinder/raw-results?limit=100&preview_chars=12000`),
     ]);
 
     // State
@@ -3413,6 +3421,26 @@ async function refreshSfPanel() {
         <td style="color:var(--green);font-weight:600">${fmt(j.new_count)}</td>
         <td>${fmt(j.total_found)}</td></tr>`).join('')+'</tbody></table></div>':
       '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div>';
+
+    // Extracted roots from latest job
+    const latestJob = jobs[0] || {};
+    const roots = (latestJob.domains_input || '').split(',').map(x=>x.trim()).filter(Boolean);
+    document.getElementById('sf-root-domains').innerHTML = roots.length
+      ? roots.map(r=>`<span class="badge badge-running" style="font-family:var(--mono)">${esc(r)}</span>`).join('')
+      : '<span class="badge">No root domains extracted yet</span>';
+
+    // Raw per-root run results
+    const rawRows = rawResults || [];
+    document.getElementById('sf-raw-results').innerHTML = rawRows.length ?
+      `<div class="table-wrap"><table><thead><tr><th>Root Domain</th><th>Status</th><th>Found</th><th>Results</th></tr></thead><tbody>`+
+      rawRows.map(r=>{
+        const lines = (r.raw_lines || []).map(h=>`<span class="badge" style="font-family:var(--mono);margin:2px">${esc(h)}</span>`).join('');
+        const stderr = r.stderr_preview ? `<div style="color:var(--red);font-family:var(--mono);font-size:11px;margin-top:6px;white-space:pre-wrap">${esc(r.stderr_preview)}</div>` : '';
+        return `<tr><td style="font-family:var(--mono);font-size:12px">${esc(r.root_domain)}</td>
+          <td><span class="badge ${r.status==='done'?'badge-done':r.status==='running'?'badge-running':'badge-error'}">${esc(r.status||'')}</span></td>
+          <td>${fmt(r.total_found||0)}</td><td>${lines || '<span style="color:var(--text-muted)">No subdomains reported yet</span>'}${stderr}</td></tr>`;
+      }).join('')+'</tbody></table></div>' :
+      '<div class="empty"><div class="empty-icon">📄</div><div class="empty-title">No run results yet</div></div>';
 
     // Stats
     document.getElementById('sf-total').textContent = fmt(hostsData?.total||0);
@@ -3446,7 +3474,8 @@ async function runSfNow() {
   if (!sfCurPid) { toast('Please select a project before running scan','err'); return; }
   const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
-  toast(data?.binary_found ? 'Subfinder started' : 'Subfinder started (binary not found — check install)','ok');
+  toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found — check install)`,'ok');
+  if (data?.root_domains?.length) document.getElementById('sf-root-domains').innerHTML = data.root_domains.map(r=>`<span class="badge badge-running" style="font-family:var(--mono)">${esc(r)}</span>`).join('');
   setTimeout(refreshSfPanel, 2000);
 }
 
