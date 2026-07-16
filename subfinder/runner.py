@@ -36,10 +36,10 @@ log = logging.getLogger(__name__)
 
 SUBFINDER_BIN = shutil.which("subfinder") or "/usr/local/bin/subfinder"
 _sf_lock = threading.Lock()
-_sf_state = {}  # project_id -> {status, job_id, new_count}
+_sf_state = {}  # project_id -> {status, job_id, new_count, root_domains, phase, progress}
 _subfinder_all_flag_supported: Optional[bool] = None
 MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRENT_PROJECTS", "1")))
-ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
+ACTIVE_SUBFINDER_STATUSES = {"queued", "extracting_roots", "running", "ssl_scanning"}
 
 PASSIVE_SOURCE_TIMEOUT = max(2, int(os.getenv("SUBDOMAIN_PASSIVE_SOURCE_TIMEOUT", "12")))
 MAX_ENUM_PROVIDER_WORKERS = max(1, int(os.getenv("SUBDOMAIN_ENUM_PROVIDER_WORKERS", "12")))
@@ -555,23 +555,44 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
     project = project_get(project_id)
     if not project:
         with _sf_lock:
-            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0, "phase": "Project lookup failed", "root_domains": []}
         return None
+
+    with _sf_lock:
+        queued = _sf_state.get(project_id, {})
+        _sf_state[project_id] = {
+            **queued,
+            "status": "extracting_roots",
+            "job_id": None,
+            "new_count": 0,
+            "root_domains": [],
+            "phase": "Extracting root domains from selected project hosts",
+            "progress": {"completed_roots": 0, "total_roots": 0},
+        }
 
     hosts = project_hosts(project_id)
     if not hosts:
         log.warning("Subfinder: project '%s' has no base hosts", project["name"])
         log_event("subfinder", "error", "No base hosts found for project", project_id=project_id, status="failed")
         with _sf_lock:
-            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0, "phase": "No base hosts found for project", "root_domains": []}
         return None
 
     root_domains = _extract_project_root_domains(hosts)
     if not root_domains:
         log_event("subfinder", "error", "Unable to extract root domains", project_id=project_id, status="failed")
         with _sf_lock:
-            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0}
+            _sf_state[project_id] = {"status": "error", "job_id": None, "new_count": 0, "phase": "Unable to extract root domains", "root_domains": []}
         return None
+
+    with _sf_lock:
+        _sf_state[project_id].update({
+            "status": "running",
+            "root_domains": root_domains,
+            "phase": f"Starting subdomain enumeration for {len(root_domains)} extracted root domain(s)",
+            "progress": {"completed_roots": 0, "total_roots": len(root_domains)},
+            "current_root": None,
+        })
 
     if not subfinder_available():
         log.warning("Subfinder binary not found. Checked PATH and /usr/local/bin/subfinder")
@@ -590,7 +611,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
     job_id = subfinder_job_create(project_id, ",".join(root_domains), triggered_by)
 
     with _sf_lock:
-        _sf_state[project_id] = {"status": "running", "job_id": job_id, "new_count": 0}
+        _sf_state[project_id].update({"status": "running", "job_id": job_id, "new_count": 0})
 
     try:
         raw_records = []
@@ -609,6 +630,11 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
             futures = {pool.submit(_run_subfinder_for_root, root_domain): root_domain for root_domain in root_domains}
             for future in as_completed(futures):
                 root_domain = futures[future]
+                with _sf_lock:
+                    _sf_state[project_id].update({
+                        "current_root": root_domain,
+                        "phase": f"Enumerating subdomains for {root_domain}",
+                    })
                 run = future.result()
                 raw_records.append(
                     {
@@ -628,6 +654,14 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                     run["stdout"],
                     run["stderr"],
                 )
+                with _sf_lock:
+                    progress = dict(_sf_state[project_id].get("progress") or {})
+                    progress["completed_roots"] = int(progress.get("completed_roots", 0)) + 1
+                    progress["total_roots"] = len(root_domains)
+                    _sf_state[project_id].update({
+                        "progress": progress,
+                        "phase": f"Completed {progress['completed_roots']} of {progress['total_roots']} root domains",
+                    })
                 if run["status"] != "done":
                     log.warning(
                         "Subfinder run for root=%s finished with status=%s stderr=%s",
@@ -658,12 +692,14 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
             log.warning("Subfinder returned 0 results — check sources/config")
             log_event("subfinder", "warning", "Subfinder returned 0 results — check sources/config", project_id=project_id, job_id=job_id, status="idle")
             with _sf_lock:
-                _sf_state[project_id] = {"status": "done", "job_id": job_id, "new_count": 0}
+                _sf_state[project_id].update({"status": "done", "job_id": job_id, "new_count": 0, "phase": "Enumeration completed with 0 results", "current_root": None})
             return job_id
 
         with _sf_lock:
             _sf_state[project_id]["new_count"] = new_count
             _sf_state[project_id]["status"] = "ssl_scanning" if scan_hosts else "done"
+            _sf_state[project_id]["phase"] = f"Discovered {new_count} new hosts; {len(scan_hosts)} pending SSL scans"
+            _sf_state[project_id]["current_root"] = None
 
         log.info(
             "Subfinder: %d new hosts (%d pending SSL scans) for '%s'",
@@ -685,6 +721,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
         with _sf_lock:
             _sf_state[project_id]["status"] = "done"
+            _sf_state[project_id]["phase"] = "Subfinder workflow completed"
         log_event("subfinder", "info", "Subfinder workflow completed", project_id=project_id, job_id=job_id, status="idle")
 
         return job_id
@@ -696,6 +733,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         with _sf_lock:
             if project_id in _sf_state:
                 _sf_state[project_id]["status"] = "error"
+                _sf_state[project_id]["phase"] = str(e)
         return None
 
 
@@ -816,7 +854,14 @@ def run_subfinder_for_all_projects_async(triggered_by: str = "manual") -> int:
         if active_count >= MAX_CONCURRENT_SUBFINDER_PROJECTS:
             return 0
         for project in candidates:
-            _sf_state[project["id"]] = {"status": "queued", "job_id": None, "new_count": 0}
+            _sf_state[project["id"]] = {
+                "status": "queued",
+                "job_id": None,
+                "new_count": 0,
+                "phase": "Queued for root-domain extraction",
+                "root_domains": [],
+                "progress": {"completed_roots": 0, "total_roots": 0},
+            }
 
     def worker():
         for project in candidates:
@@ -826,7 +871,7 @@ def run_subfinder_for_all_projects_async(triggered_by: str = "manual") -> int:
             except Exception:
                 log.exception("Subfinder all-project run failed for project=%s", pid)
                 with _sf_lock:
-                    _sf_state[pid] = {"status": "error", "job_id": None, "new_count": 0}
+                    _sf_state[pid] = {"status": "error", "job_id": None, "new_count": 0, "phase": "Subfinder all-project run failed", "root_domains": []}
 
     t = threading.Thread(target=worker, daemon=True, name="sf-all-projects")
     t.start()
@@ -847,7 +892,7 @@ def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
         # scheduler can launch many project threads in one tick before each
         # worker has time to mark itself running, exhausting process threads
         # once their SSL scans begin.
-        _sf_state[project_id] = {"status": "queued", "job_id": None, "new_count": 0}
+        _sf_state[project_id] = {"status": "queued", "job_id": None, "new_count": 0, "phase": "Queued for root-domain extraction", "root_domains": [], "progress": {"completed_roots": 0, "total_roots": 0}}
 
     t = threading.Thread(
         target=run_subfinder_for_project,
