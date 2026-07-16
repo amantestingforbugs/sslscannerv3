@@ -2103,6 +2103,60 @@ function getScrollContainer() {
   return document.querySelector('.content') || document.scrollingElement || document.documentElement;
 }
 
+function isElementScrollable(el, axis = 'y') {
+  if (!el || el === document || el === window) return false;
+  const style = window.getComputedStyle(el);
+  const overflow = axis === 'y' ? style.overflowY : style.overflowX;
+  if (!/(auto|scroll|overlay)/.test(overflow)) return false;
+  return axis === 'y' ? el.scrollHeight > el.clientHeight + 1 : el.scrollWidth > el.clientWidth + 1;
+}
+
+function canScrollInDirection(el, delta, axis = 'y') {
+  if (!isElementScrollable(el, axis)) return false;
+  if (axis === 'y') {
+    if (delta < 0) return el.scrollTop > 0;
+    if (delta > 0) return el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+    return false;
+  }
+  if (delta < 0) return el.scrollLeft > 0;
+  if (delta > 0) return el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+  return false;
+}
+
+function findScrollableAncestor(start, stopAt) {
+  let node = start?.nodeType === Node.ELEMENT_NODE ? start : start?.parentElement;
+  while (node && node !== document.body && node !== document.documentElement) {
+    if (node === stopAt) return node;
+    if (isElementScrollable(node, 'y') || isElementScrollable(node, 'x')) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function installGlobalScrollProxy() {
+  document.addEventListener('wheel', (event) => {
+    if (event.defaultPrevented || event.ctrlKey) return;
+    const appScroller = getScrollContainer();
+    if (!appScroller) return;
+    const target = event.target;
+    const localScroller = findScrollableAncestor(target, appScroller);
+
+    if (localScroller && localScroller !== appScroller) {
+      const dominantAxis = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? 'x' : 'y';
+      const dominantDelta = dominantAxis === 'x' ? event.deltaX : event.deltaY;
+      if (canScrollInDirection(localScroller, dominantDelta, dominantAxis)) return;
+    }
+
+    if (localScroller === appScroller && canScrollInDirection(appScroller, event.deltaY, 'y')) return;
+    if (!canScrollInDirection(appScroller, event.deltaY, 'y')) return;
+
+    event.preventDefault();
+    appScroller.scrollBy({ top: event.deltaY, left: 0, behavior: 'auto' });
+  }, { passive: false });
+}
+
+installGlobalScrollProxy();
+
 function scrollAppToTop(behavior = 'auto') {
   const scroller = getScrollContainer();
   scroller?.scrollTo?.({ top: 0, left: 0, behavior });
