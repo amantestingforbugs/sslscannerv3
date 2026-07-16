@@ -865,6 +865,26 @@ def subfinder_raw_result_finish(
     stdout_text,
     stderr_text,
 ):
+    # Live subfinder runs update this row while stdout is streaming. Preserve the
+    # highest seen count and latest non-empty preview so the UI does not regress
+    # to 0 if the final process summary is empty or races with a live flush.
+    existing = x(
+        "SELECT total_found,stdout_text,stdout_z FROM subfinder_raw_results WHERE id=?",
+        (rid,),
+    ).fetchone()
+    existing_stdout = ""
+    existing_total = 0
+    if existing:
+        existing_stdout = existing["stdout_text"] or _decompress_text(existing["stdout_z"])
+        existing_total = int(existing["total_found"] or 0)
+
+    final_stdout = stdout_text or existing_stdout
+    final_total = max(
+        int(total_found or 0),
+        existing_total,
+        len([ln for ln in (final_stdout or "").splitlines() if ln.strip()]),
+    )
+
     x(
         "UPDATE subfinder_raw_results "
         "SET status=?,exit_code=?,total_found=?,stdout_text='',stderr_text='',stdout_z=?,stderr_z=?,finished_at=? "
@@ -872,8 +892,8 @@ def subfinder_raw_result_finish(
         (
             status,
             exit_code,
-            total_found,
-            _compress_text(stdout_text),
+            final_total,
+            _compress_text(final_stdout),
             _compress_text(stderr_text),
             now(),
             rid,
@@ -896,6 +916,9 @@ def subfinder_raw_results_list(pid, limit=20, preview_chars=4000):
             out_text = out_text[:preview_chars] + "\n…truncated for UI performance…"
         d["raw_preview"] = out_text
         raw_lines = [ln for ln in out_text.splitlines() if ln.strip()]
+        # Older/live rows can contain a compressed preview while total_found is
+        # still 0. Derive the display count from the preview as a fallback.
+        d["total_found"] = max(int(d.get("total_found") or 0), len(raw_lines))
         if preview_chars:
             raw_lines = raw_lines[:250]
         d["raw_lines"] = raw_lines
