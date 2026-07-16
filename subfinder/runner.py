@@ -360,38 +360,58 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
 def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
-    command_str = " ".join(cmd) if cmd else "subfinder binary not found"
-    subfinder_stdout = ""
-    subfinder_stderr = ""
-    subfinder_code = None
-    subfinder_found: List[str] = []
-    try:
-        if subfinder_bin:
-            log.info("Subfinder start (bin=%s): %s", subfinder_bin, " ".join(cmd))
-            log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=" ".join(cmd), status="running")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            subfinder_stdout = result.stdout or ""
-            subfinder_stderr = result.stderr or ""
-            subfinder_code = result.returncode
-            raw_lines = [ln.strip().lower() for ln in subfinder_stdout.splitlines() if ln.strip()]
-            subfinder_found = sorted(
-                {
-                    candidate
-                    for ln in raw_lines
-                    for candidate in [_normalize_host(ln)]
-                    if candidate
-                    and _HOST_RE.match(candidate)
-                    and _is_host_within_root(candidate, root_domain)
-                }
-            )
-        else:
-            subfinder_stderr = "subfinder binary not found in PATH or /usr/local/bin/subfinder"
-            subfinder_code = 127
+    subfinder_command = " ".join(cmd) if cmd else "subfinder binary not found"
+    command_str = f"{subfinder_command} && built-in passive sources"
 
-        found = sorted(subfinder_found)
-        status = "done" if subfinder_code == 0 else "error"
-        stdout = subfinder_stdout
-        stderr = subfinder_stderr
+    def run_subfinder() -> Tuple[List[str], str, str, Optional[int], str]:
+        if not subfinder_bin:
+            return [], "", "subfinder binary not found in PATH or /usr/local/bin/subfinder", 127, "error"
+        log.info("Subfinder start (bin=%s): %s", subfinder_bin, " ".join(cmd))
+        log_event("subfinder", "info", "Subfinder command started", root_domain=root_domain, command=" ".join(cmd), status="running")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        stdout = result.stdout or ""
+        raw_lines = [ln.strip().lower() for ln in stdout.splitlines() if ln.strip()]
+        found = sorted(
+            {
+                candidate
+                for ln in raw_lines
+                for candidate in [_normalize_host(ln)]
+                if candidate
+                and _HOST_RE.match(candidate)
+                and _is_host_within_root(candidate, root_domain)
+            }
+        )
+        return found, stdout, result.stderr or "", result.returncode, "done" if result.returncode == 0 else "error"
+
+    def run_passive() -> Dict[str, object]:
+        return enumerate_passive_subdomains(root_domain, timeout=PASSIVE_SOURCE_TIMEOUT)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            subfinder_future = pool.submit(run_subfinder)
+            passive_future = pool.submit(run_passive)
+            subfinder_found, _subfinder_stdout, subfinder_stderr, subfinder_code, subfinder_status = subfinder_future.result()
+            passive = passive_future.result()
+
+        passive_found = passive.get("found") or []
+        passive_host_sources = passive.get("host_sources") or {}
+        found = sorted(set(subfinder_found) | set(passive_found))
+        host_sources: Dict[str, List[str]] = {host: ["Subfinder"] for host in subfinder_found}
+        for host, sources in passive_host_sources.items():
+            host_sources.setdefault(host, [])
+            host_sources[host].extend(sources)
+        host_sources = {host: sorted(set(sources)) for host, sources in host_sources.items()}
+
+        status = "done" if subfinder_status == "done" or passive_found else subfinder_status
+        stdout = "\n".join(found)
+        stderr_parts = [subfinder_stderr.strip()] if subfinder_stderr.strip() else []
+        errors = passive.get("errors") or {}
+        skipped = passive.get("skipped") or []
+        if errors:
+            stderr_parts.append("Passive provider errors: " + json.dumps(errors, sort_keys=True))
+        if skipped:
+            stderr_parts.append("Skipped passive providers: " + ", ".join(skipped))
+        stderr = "\n".join(stderr_parts)
         log.info("Subfinder enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
         return {
             "root_domain": root_domain,
@@ -401,7 +421,7 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             "stdout": stdout,
             "stderr": stderr,
             "found": found,
-            "sources": {host: ["Subfinder"] for host in found},
+            "sources": host_sources,
         }
     except subprocess.TimeoutExpired:
         msg = f"Subfinder timed out after {timeout}s for {root_domain}"
@@ -414,6 +434,7 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             "stdout": "",
             "stderr": msg,
             "found": [],
+            "sources": {},
         }
     except Exception as e:
         log.exception("Subfinder execution error: %s", e)
@@ -425,6 +446,7 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180) -> Dict[str, o
             "stdout": "",
             "stderr": str(e),
             "found": [],
+            "sources": {},
         }
 
 
@@ -591,7 +613,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                 job_id=job_id,
                 project_id=project_id,
                 root_domain=root_domain,
-                command=" ".join(_build_subfinder_cmd("subfinder", root_domain)),
+                command=" ".join(_build_subfinder_cmd("subfinder", root_domain)) + " && built-in passive sources",
             )
             for root_domain in root_domains
         }
