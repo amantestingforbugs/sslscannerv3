@@ -840,6 +840,23 @@ def subfinder_raw_result_add(job_id, project_id, root_domain, command, started_a
     return rid
 
 
+def subfinder_raw_result_update_live(rid, stdout_text, stderr_text="", status="running", exit_code=None):
+    x(
+        "UPDATE subfinder_raw_results "
+        "SET status=?,exit_code=COALESCE(?,exit_code),total_found=?,stdout_text='',stderr_text='',stdout_z=?,stderr_z=? "
+        "WHERE id=?",
+        (
+            status,
+            exit_code,
+            len([ln for ln in (stdout_text or "").splitlines() if ln.strip()]),
+            _compress_text(stdout_text),
+            _compress_text(stderr_text),
+            rid,
+        ),
+    )
+    commit()
+
+
 def subfinder_raw_result_finish(
     rid,
     status,
