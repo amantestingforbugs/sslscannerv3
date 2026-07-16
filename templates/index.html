@@ -855,7 +855,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="nav-section">Discovery</div>
     <button class="nav-item" data-page="subfinder">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
-      <span>Subfinder</span>
+      <span>Project automation</span>
     </button>
     <button class="nav-item" data-page="discoveries">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/><circle cx="7" cy="7" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="17" cy="17" r="1"/></svg>
@@ -1109,7 +1109,7 @@ tbody tr:last-child td{border-bottom:none}
             <div class="settings-panel-head"><div><div class="settings-panel-title">Appearance & Layout</div><div class="settings-panel-sub">Personalize how the dashboard looks and behaves locally.</div></div></div>
             <div class="settings-panel-body settings-grid-2">
               <div class="form-group"><label class="form-label">Theme Mode</label><select class="form-input" id="settingsTheme" onchange="setTheme(this.value); updateAppPreferencePreview()"><option value="light">Light</option><option value="dark">Dark</option></select></div>
-              <div class="form-group"><label class="form-label">Default Landing Page</label><select class="form-input" id="pref-default-page"><option value="dashboard">Dashboard</option><option value="projects">Projects</option><option value="alerts">Alerts</option><option value="subfinder">Subfinder</option><option value="logs">Logs</option></select></div>
+              <div class="form-group"><label class="form-label">Default Landing Page</label><select class="form-input" id="pref-default-page"><option value="dashboard">Dashboard</option><option value="projects">Projects</option><option value="alerts">Alerts</option><option value="subfinder">Project automation</option><option value="logs">Logs</option></select></div>
               <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-compact-switch"></span><span><div class="setting-tile-title">Compact density</div><div class="setting-tile-sub">Reduce spacing for large inventories.</div></span><input type="checkbox" id="pref-compact" hidden onchange="applyAppPreferencesFromForm()"></label>
               <label class="setting-tile form-toggle"><span class="toggle-switch" id="pref-motion-switch"></span><span><div class="setting-tile-title">Reduce motion</div><div class="setting-tile-sub">Disable non-essential transitions and pulse effects.</div></span><input type="checkbox" id="pref-reduce-motion" hidden onchange="applyAppPreferencesFromForm()"></label>
             </div>
@@ -1509,7 +1509,7 @@ tbody tr:last-child td{border-bottom:none}
     <div class="page" id="page-subfinder">
       <div class="page-header">
         <div>
-          <div class="page-title">Subfinder Integration</div>
+          <div class="page-title">Project automation</div>
           <div class="page-sub">Continuous subdomain discovery powered by ProjectDiscovery Subfinder</div>
         </div>
       </div>
@@ -1558,7 +1558,7 @@ tbody tr:last-child td{border-bottom:none}
 
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Subfinder Control</span>
+            <span class="card-title">Project automation Control</span>
             <div class="card-actions">
               <label class="form-toggle" id="sf-toggle-label">
                 <div class="toggle-switch" id="sf-toggle"></div>
@@ -2076,7 +2076,7 @@ setInterval(tick,1000); tick();
 // ════════════════════════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:'Dashboard', projects:'Projects', detail:'Project Detail',
-  alerts:'Alerts', subfinder:'Subfinder', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subdomain-tool':'Subdomain Enumeration', logs:'Logs', settings:'Settings'
+  alerts:'Alerts', subfinder:'Project automation', discoveries:'New Discoveries', 'discoveries-latest':'Latest Discovery Batch', 'subdomain-tool':'Subdomain Enumeration', logs:'Logs', settings:'Settings'
 };
 
 function routeForPage(name) {
