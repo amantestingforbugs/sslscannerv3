@@ -192,3 +192,21 @@ def test_run_subfinder_for_root_uses_subfinder_only(monkeypatch):
     assert result["found"] == ["api.example.com"]
     assert result["sources"] == {"api.example.com": ["Subfinder"]}
     assert result["command"] == "/bin/subfinder -d example.com -silent -timeout 30"
+
+def test_subfinder_raw_result_finish_preserves_live_count_and_preview(tmp_path, monkeypatch):
+    from db import database as db
+
+    db._local.c = None
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "sentinel.db")
+    db.init_db()
+
+    project_id = db.project_create("Project 1")["id"]
+    job_id = db.subfinder_job_create(project_id, "example.com", by="manual")
+    rid = db.subfinder_raw_result_add(job_id, project_id, "example.com", "subfinder -d example.com")
+    db.subfinder_raw_result_update_live(rid, "api.example.com\ncdn.example.com", status="running")
+    db.subfinder_raw_result_finish(rid, "done", 0, 0, "", "")
+
+    rows = db.subfinder_raw_results_list(project_id)
+
+    assert rows[0]["total_found"] == 2
+    assert rows[0]["raw_lines"] == ["api.example.com", "cdn.example.com"]
