@@ -26,10 +26,11 @@ import urllib.parse
 import urllib.request
 import threading
 import time
+import queue
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 from core.observability import log_event, publish
 
@@ -358,7 +359,7 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
     return cmd
 
 
-def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id: Optional[str] = None, live_project_id: Optional[str] = None, live_job_id: Optional[str] = None) -> Dict[str, object]:
+def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id: Optional[str] = None, live_project_id: Optional[str] = None, live_job_id: Optional[str] = None, live_ssl_scanner: Optional[Any] = None) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
     subfinder_command = " ".join(cmd) if cmd else "subfinder binary not found"
@@ -408,6 +409,8 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id
                 if fresh_hosts:
                     live_new_seen.update(fresh_hosts)
                     db.subfinder_new_discoveries_add_batch(live_job_id, live_project_id, fresh_hosts)
+                    if live_ssl_scanner:
+                        live_ssl_scanner.submit(fresh_hosts)
                     with _sf_lock:
                         state = _sf_state.get(live_project_id)
                         if state:
@@ -672,6 +675,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
     try:
         raw_records = []
         discovered_all: List[str] = []
+        live_ssl_scanner = _LiveSubfinderSSLScanner(project_id, job_id)
         raw_ids = {
             root_domain: subfinder_raw_result_add(
                 job_id=job_id,
@@ -683,7 +687,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         }
         workers = max(1, min(8, len(root_domains)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_run_subfinder_for_root, root_domain, 180, raw_ids[root_domain], project_id, job_id): root_domain for root_domain in root_domains}
+            futures = {pool.submit(_run_subfinder_for_root, root_domain, 180, raw_ids[root_domain], project_id, job_id, live_ssl_scanner): root_domain for root_domain in root_domains}
             for future in as_completed(futures):
                 root_domain = futures[future]
                 run = future.result()
@@ -725,7 +729,8 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         # during the SSL phase.  Scan both this run's new hosts and any older
         # unscanned subfinder hosts so rerunning the project integration can
         # complete and produce certificate results instead of reporting no work.
-        scan_hosts = sorted(set(new_hosts) | set(subfinder_hosts_new_unscanned(project_id)))
+        scan_hosts = sorted(set(subfinder_hosts_new_unscanned(project_id)))
+        live_ssl_scanner.submit(scan_hosts)
 
         raw_dir = Path("data/subfinder_raw")
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -735,6 +740,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         subfinder_job_finish(job_id, new_count, len(discovered), str(raw_output_path))
 
         if not discovered:
+            live_ssl_scanner.finish()
             log.warning("Subfinder returned 0 results — check sources/config")
             log_event("subfinder", "warning", "Subfinder returned 0 results — check sources/config", project_id=project_id, job_id=job_id, status="idle")
             with _sf_lock:
@@ -761,8 +767,7 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
             status="idle",
         )
 
-        if scan_hosts:
-            _start_subfinder_ssl_scan_async(project_id, scan_hosts, job_id)
+        live_ssl_scanner.finish()
 
         log_event("subfinder", "info", "Subfinder workflow completed", project_id=project_id, job_id=job_id, status="idle")
 
@@ -777,6 +782,131 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                 _sf_state[project_id]["status"] = "error"
         return None
 
+
+
+class _LiveSubfinderSSLScanner:
+    """Continuously scans newly discovered Subfinder hosts as enumeration streams in."""
+
+    def __init__(self, project_id: str, job_id: str):
+        from db.database import scan_create, project_get
+        from scheduler.runner import MAX_WORKERS, _scan_lock, _scan_state
+
+        self.project_id = project_id
+        self.job_id = job_id
+        self.project = project_get(project_id) or {"name": f"project-{project_id[:8]}"}
+        self.scan = scan_create(project_id, 0, by=f"subfinder:{job_id}")
+        self.scan_id = self.scan["id"]
+        self.queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        self.seen: Set[str] = set()
+        self.scanned_hosts: List[str] = []
+        self.result_batch: List[Dict] = []
+        self.done = 0
+        self.total = 0
+        self.lock = threading.Lock()
+        workers = max(1, min(MAX_WORKERS, int(os.getenv("SUBFINDER_SSL_LIVE_WORKERS", "32"))))
+        self.workers = workers
+        self.threads = [threading.Thread(target=self._worker, daemon=True, name=f"sf-live-ssl-{job_id[:8]}-{i}") for i in range(workers)]
+        with _scan_lock:
+            _scan_state[self.scan_id] = {
+                "id": self.scan_id, "status": "running", "progress": 0, "done": 0, "total": 0,
+                "project_id": project_id, "project_name": self.project.get("name") or f"project-{project_id[:8]}",
+                "source": "subfinder", "subfinder_job_id": job_id,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        publish("scan_update", {"id": self.scan_id, "status": "running", "progress": 0, "done": 0, "total": 0, "project_id": project_id, "source": "subfinder", "subfinder_job_id": job_id})
+        for thread in self.threads:
+            thread.start()
+
+    def submit(self, hostnames: List[str]) -> None:
+        from db.database import scan_update
+        new_hosts = []
+        with self.lock:
+            for host in hostnames:
+                if host and host not in self.seen:
+                    self.seen.add(host)
+                    new_hosts.append(host)
+            if not new_hosts:
+                return
+            self.total += len(new_hosts)
+            total = self.total
+        scan_update(self.scan_id, total=total)
+        from scheduler.runner import _scan_lock, _scan_state
+        with _scan_lock:
+            if self.scan_id in _scan_state:
+                _scan_state[self.scan_id]["total"] = total
+        publish("scan_update", {"id": self.scan_id, "status": "running", "progress": self.done, "done": self.done, "total": total, "project_id": self.project_id, "source": "subfinder", "subfinder_job_id": self.job_id})
+        for host in new_hosts:
+            self.queue.put(host)
+
+    def _worker(self) -> None:
+        from core.ssl_checker import get_cert_info
+        while True:
+            host = self.queue.get()
+            try:
+                if host is None:
+                    return
+                self._record_result(get_cert_info(host))
+            finally:
+                self.queue.task_done()
+
+    def _record_result(self, r: Dict) -> None:
+        from db.database import results_batch_save, alert_add, scan_progress, alerts_unseen_count, alert_settings_get
+        from scheduler.runner import BATCH_SIZE, _scan_lock, _scan_state, _build_alert_from_result
+        alert_settings = alert_settings_get()
+        expiring_threshold = max(1, min(365, int(alert_settings.get("minimum_days_left") or 30)))
+        hostname = r.get("hostname", "")
+        alert = _build_alert_from_result(r, expiring_threshold)
+        with self.lock:
+            self.scanned_hosts.append(hostname)
+            self.result_batch.append(r)
+            self.done += 1
+            done, total = self.done, self.total
+            batch = []
+            if len(self.result_batch) >= BATCH_SIZE:
+                batch = self.result_batch[:]
+                self.result_batch.clear()
+        if batch:
+            results_batch_save(self.scan_id, self.project_id, batch)
+        if alert:
+            h, issue, detail, scope = alert
+            alert_add(self.project_id, h, issue, f"[Subfinder] {detail}", self.scan_id, mismatch_scope=scope)
+            publish("alert_update", {"unseen_count": alerts_unseen_count()})
+        scan_progress(self.scan_id, done)
+        with _scan_lock:
+            if self.scan_id in _scan_state:
+                _scan_state[self.scan_id].update({"progress": done, "done": done, "total": total})
+        publish("scan_result", {"scan_id": self.scan_id, "project_id": self.project_id, "source": "subfinder", "row": r})
+        publish("scan_update", {"id": self.scan_id, "status": "running", "progress": done, "done": done, "total": total, "project_id": self.project_id, "source": "subfinder", "subfinder_job_id": self.job_id})
+
+    def finish(self) -> None:
+        from db.database import results_batch_save, scan_finish, subfinder_hosts_mark_scanned, alerts_unseen_count, alerts_unsent, alert_mark_sent, alert_settings_get
+        from scheduler.runner import _scan_lock, _scan_state
+        from alerts.notifiers import AlertManager
+
+        self.queue.join()
+        for _ in self.threads:
+            self.queue.put(None)
+        for thread in self.threads:
+            thread.join(timeout=5)
+        with self.lock:
+            batch = self.result_batch[:]
+            self.result_batch.clear()
+            done, total = self.done, self.total
+            scanned = list(self.scanned_hosts)
+        if batch:
+            results_batch_save(self.scan_id, self.project_id, batch)
+        subfinder_hosts_mark_scanned(self.project_id, scanned)
+        publish("alert_update", {"unseen_count": alerts_unseen_count()})
+        scan_finish(self.scan_id)
+        finished_at = datetime.now(timezone.utc).isoformat()
+        with _scan_lock:
+            if self.scan_id in _scan_state:
+                _scan_state[self.scan_id].update({"status": "done", "progress": total, "done": done, "total": total, "finished_at": finished_at})
+        publish("scan_update", {"id": self.scan_id, "status": "done", "progress": total, "done": done, "total": total, "project_id": self.project_id, "source": "subfinder", "subfinder_job_id": self.job_id, "finished_at": finished_at})
+        unsent = [a for a in alerts_unsent() if a["project_id"] == self.project_id and a.get("scan_id") == self.scan_id]
+        if unsent and AlertManager(alert_settings_get()).dispatch(self.project.get("name") or f"project-{self.project_id[:8]}", unsent):
+            for alert in unsent:
+                alert_mark_sent(alert["id"])
 
 def _start_subfinder_ssl_scan_async(project_id: str, hostnames: List[str], job_id: str) -> None:
     """Start certificate scans for discovered hosts without blocking enumeration results."""
