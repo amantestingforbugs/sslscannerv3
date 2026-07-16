@@ -1569,8 +1569,6 @@ tbody tr:last-child td{border-bottom:none}
           </div>
           <div class="card-body">
             <div id="sf-status-bar" style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">Status: idle</div>
-            <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:6px">Extracted root domains</div>
-            <div id="sf-root-domains" style="display:flex;flex-wrap:wrap;gap:6px"><span class="badge">Select a project</span></div>
           </div>
         </div>
 
@@ -3493,12 +3491,6 @@ async function refreshSfPanel() {
         <td>${fmt(j.total_found)}</td></tr>`).join('')+'</tbody></table></div>':
       '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">No jobs yet</div></div>';
 
-    // Extracted roots from latest job
-    const latestJob = jobs[0] || {};
-    const roots = (latestJob.domains_input || '').split(',').map(x=>x.trim()).filter(Boolean);
-    document.getElementById('sf-root-domains').innerHTML = roots.length
-      ? roots.map(r=>`<span class="badge badge-running" style="font-family:var(--mono)">${esc(r)}</span>`).join('')
-      : '<span class="badge">No root domains extracted yet</span>';
 
     // Raw per-root run results
     const rawRows = rawResults || [];
@@ -3546,7 +3538,6 @@ async function runSfNow() {
   const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
   toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found — check install)`,'ok');
-  if (data?.root_domains?.length) document.getElementById('sf-root-domains').innerHTML = data.root_domains.map(r=>`<span class="badge badge-running" style="font-family:var(--mono)">${esc(r)}</span>`).join('');
   setTimeout(refreshSfPanel, 2000);
 }
 
