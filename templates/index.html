@@ -3500,11 +3500,15 @@ async function refreshSfPanel() {
     document.getElementById('sf-raw-results').innerHTML = rawRows.length ?
       `<div class="table-wrap scroll-chain-y"><table><thead><tr><th>Root Domain</th><th>Status</th><th>Found</th><th>Results</th></tr></thead><tbody>`+
       rawRows.map(r=>{
-        const lines = (r.raw_lines || []).map(h=>`<span class="badge" style="font-family:var(--mono);margin:2px">${esc(h)}</span>`).join('');
+        const rawLines = r.raw_lines || [];
+        const visibleLines = rawLines.slice(0, 2);
+        const hiddenCount = Math.max((r.total_found || rawLines.length || 0) - visibleLines.length, 0);
+        const lines = visibleLines.map(h=>`<span class="badge" style="font-family:var(--mono);margin:2px">${esc(h)}</span>`).join('');
+        const hiddenSummary = hiddenCount > 0 ? `<span class="badge" style="margin:2px;color:var(--text-muted)">+${fmt(hiddenCount)} hidden</span>` : '';
         const stderr = r.stderr_preview ? `<div style="color:var(--red);font-family:var(--mono);font-size:11px;margin-top:6px;white-space:pre-wrap">${esc(r.stderr_preview)}</div>` : '';
         return `<tr><td style="font-family:var(--mono);font-size:12px">${esc(r.root_domain)}</td>
           <td><span class="badge ${r.status==='done'?'badge-done':r.status==='running'?'badge-running':'badge-error'}">${esc(r.status||'')}</span></td>
-          <td>${fmt(r.total_found||0)}</td><td>${lines || '<span style="color:var(--text-muted)">No subdomains reported yet</span>'}${stderr}</td></tr>`;
+          <td>${fmt(r.total_found||0)}</td><td>${lines ? lines + hiddenSummary : '<span style="color:var(--text-muted)">No subdomains reported yet</span>'}${stderr}</td></tr>`;
       }).join('')+'</tbody></table></div>' :
       '<div class="empty"><div class="empty-icon">📄</div><div class="empty-title">No run results yet</div></div>';
 
