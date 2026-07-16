@@ -358,11 +358,11 @@ def _build_subfinder_cmd(subfinder_bin: str, root_domain: str) -> List[str]:
     return cmd
 
 
-def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id: Optional[str] = None) -> Dict[str, object]:
+def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id: Optional[str] = None, live_project_id: Optional[str] = None, live_job_id: Optional[str] = None) -> Dict[str, object]:
     subfinder_bin = _resolve_subfinder_bin()
     cmd = _build_subfinder_cmd(subfinder_bin, root_domain) if subfinder_bin else []
     subfinder_command = " ".join(cmd) if cmd else "subfinder binary not found"
-    command_str = f"{subfinder_command} && built-in passive sources"
+    command_str = subfinder_command
 
     def run_subfinder() -> Tuple[List[str], str, str, Optional[int], str]:
         if not subfinder_bin:
@@ -390,6 +390,8 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id
         stdout_lines: List[str] = []
         last_live_update = 0.0
 
+        live_new_seen: Set[str] = set()
+
         def flush_live(force: bool = False):
             nonlocal last_live_update
             if not live_result_id:
@@ -398,7 +400,20 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id
             if not force and current - last_live_update < 0.75:
                 return
             from db import database as db
-            db.subfinder_raw_result_update_live(live_result_id, "\n".join(sorted(found_set)), status="running")
+            current_found = sorted(found_set)
+            db.subfinder_raw_result_update_live(live_result_id, "\n".join(current_found), status="running")
+            if live_project_id and live_job_id and current_found:
+                _, new_hosts = db.subfinder_hosts_add_batch(live_project_id, current_found)
+                fresh_hosts = [h for h in new_hosts if h not in live_new_seen]
+                if fresh_hosts:
+                    live_new_seen.update(fresh_hosts)
+                    db.subfinder_new_discoveries_add_batch(live_job_id, live_project_id, fresh_hosts)
+                    with _sf_lock:
+                        state = _sf_state.get(live_project_id)
+                        if state:
+                            state["new_count"] = int(state.get("new_count") or 0) + len(fresh_hosts)
+                            state["total_found"] = len(set(state.get("live_found", [])) | set(current_found))
+                            state["live_found"] = sorted(set(state.get("live_found", [])) | set(current_found))
             last_live_update = current
 
         try:
@@ -438,35 +453,13 @@ def _run_subfinder_for_root(root_domain: str, timeout: int = 180, live_result_id
         stdout = "".join(stdout_lines)
         return found, stdout, stderr or "", proc.returncode, "done" if proc.returncode == 0 else "error"
 
-    def run_passive() -> Dict[str, object]:
-        return enumerate_passive_subdomains(root_domain, timeout=PASSIVE_SOURCE_TIMEOUT)
-
     try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            subfinder_future = pool.submit(run_subfinder)
-            passive_future = pool.submit(run_passive)
-            subfinder_found, _subfinder_stdout, subfinder_stderr, subfinder_code, subfinder_status = subfinder_future.result()
-            passive = passive_future.result()
-
-        passive_found = passive.get("found") or []
-        passive_host_sources = passive.get("host_sources") or {}
-        found = sorted(set(subfinder_found) | set(passive_found))
-        host_sources: Dict[str, List[str]] = {host: ["Subfinder"] for host in subfinder_found}
-        for host, sources in passive_host_sources.items():
-            host_sources.setdefault(host, [])
-            host_sources[host].extend(sources)
-        host_sources = {host: sorted(set(sources)) for host, sources in host_sources.items()}
-
-        status = "done" if subfinder_status == "done" or passive_found else subfinder_status
+        subfinder_found, _subfinder_stdout, subfinder_stderr, subfinder_code, subfinder_status = run_subfinder()
+        found = sorted(set(subfinder_found))
+        host_sources: Dict[str, List[str]] = {host: ["Subfinder"] for host in found}
+        status = subfinder_status
         stdout = "\n".join(found)
-        stderr_parts = [subfinder_stderr.strip()] if subfinder_stderr.strip() else []
-        errors = passive.get("errors") or {}
-        skipped = passive.get("skipped") or []
-        if errors:
-            stderr_parts.append("Passive provider errors: " + json.dumps(errors, sort_keys=True))
-        if skipped:
-            stderr_parts.append("Skipped passive providers: " + ", ".join(skipped))
-        stderr = "\n".join(stderr_parts)
+        stderr = subfinder_stderr.strip()
         log.info("Subfinder enumeration finished root=%s subfinder_exit=%s discovered=%d", root_domain, subfinder_code, len(found))
         return {
             "root_domain": root_domain,
@@ -684,13 +677,13 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
                 job_id=job_id,
                 project_id=project_id,
                 root_domain=root_domain,
-                command=" ".join(_build_subfinder_cmd("subfinder", root_domain)) + " && built-in passive sources",
+                command=" ".join(_build_subfinder_cmd("subfinder", root_domain)),
             )
             for root_domain in root_domains
         }
         workers = max(1, min(8, len(root_domains)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_run_subfinder_for_root, root_domain, 180, raw_ids[root_domain]): root_domain for root_domain in root_domains}
+            futures = {pool.submit(_run_subfinder_for_root, root_domain, 180, raw_ids[root_domain], project_id, job_id): root_domain for root_domain in root_domains}
             for future in as_completed(futures):
                 root_domain = futures[future]
                 run = future.result()
@@ -724,6 +717,9 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
         discovered = sorted(set(discovered_all))
         new_count, new_hosts = subfinder_hosts_add_batch(project_id, discovered)
+        with _sf_lock:
+            live_new_count = int((_sf_state.get(project_id) or {}).get("new_count") or 0)
+        new_count += live_new_count
         subfinder_new_discoveries_add_batch(job_id, project_id, new_hosts)
         # A previous project subdomain run may have discovered hosts but failed
         # during the SSL phase.  Scan both this run's new hosts and any older

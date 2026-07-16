@@ -175,13 +175,11 @@ def test_enumerate_passive_subdomains_skips_missing_api_key_and_records_failures
     assert "Failing API" in result["errors"]
 
 
-def test_run_subfinder_for_root_merges_subfinder_and_passive_results(monkeypatch):
+def test_run_subfinder_for_root_uses_subfinder_only(monkeypatch):
     import subfinder.runner as runner
 
     monkeypatch.setattr(runner, "_resolve_subfinder_bin", lambda: "/bin/subfinder")
     monkeypatch.setattr(runner, "_subfinder_supports_all_flag", lambda _bin: False)
-    monkeypatch.setattr(runner, "enumerate_passive_subdomains", lambda _domain, timeout=runner.PASSIVE_SOURCE_TIMEOUT: {"found": ["cdn.example.com"], "host_sources": {"cdn.example.com": ["crt.sh"]}, "errors": {}, "skipped": []})
-
     class Result:
         stdout = "api.example.com\n"
         stderr = ""
@@ -191,6 +189,6 @@ def test_run_subfinder_for_root_merges_subfinder_and_passive_results(monkeypatch
 
     result = runner._run_subfinder_for_root("example.com")
 
-    assert result["found"] == ["api.example.com", "cdn.example.com"]
-    assert result["sources"] == {"api.example.com": ["Subfinder"], "cdn.example.com": ["crt.sh"]}
-    assert "built-in passive sources" in result["command"]
+    assert result["found"] == ["api.example.com"]
+    assert result["sources"] == {"api.example.com": ["Subfinder"]}
+    assert result["command"] == "/bin/subfinder -d example.com -silent -timeout 30"
