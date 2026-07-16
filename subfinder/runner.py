@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
-from core.observability import log_event
+from core.observability import log_event, publish
 
 log = logging.getLogger(__name__)
 
@@ -802,24 +802,36 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
     """Run SSL checks on newly discovered subfinder hosts and save results."""
     from db.database import (
         scan_create, scan_finish, results_batch_save,
-        subfinder_hosts_mark_scanned, alert_add, scan_progress
+        subfinder_hosts_mark_scanned, alert_add, scan_progress, scan_update,
+        alerts_unseen_count, alerts_unsent, alert_mark_sent, alert_settings_get,
+        project_get
     )
     from core.ssl_checker import run_checker
-    from scheduler.runner import BATCH_SIZE, PROGRESS_UPDATE_EVERY, MAX_WORKERS, _scan_lock, _scan_state
+    from scheduler.runner import (
+        BATCH_SIZE, PROGRESS_UPDATE_EVERY, MAX_WORKERS, _scan_lock, _scan_state,
+        _build_alert_from_result,
+    )
+    from alerts.notifiers import AlertManager
 
     if not hostnames:
         return
 
     total = len(hostnames)
+    project = project_get(project_id) or {"name": f"project-{project_id[:8]}"}
+    alert_settings = alert_settings_get()
+    expiring_threshold = max(1, min(365, int(alert_settings.get("minimum_days_left") or 30)))
     scan = scan_create(project_id, total, by=f"subfinder:{job_id}")
     scan_id = scan["id"]
 
     with _scan_lock:
         _scan_state[scan_id] = {
-            "status": "running", "progress": 0, "total": total,
-            "project_id": project_id, "project_name": f"subfinder-{project_id[:8]}",
+            "id": scan_id, "status": "running", "progress": 0, "done": 0, "total": total,
+            "project_id": project_id, "project_name": project.get("name") or f"project-{project_id[:8]}",
+            "source": "subfinder", "subfinder_job_id": job_id,
             "started_at": datetime.now(timezone.utc).isoformat()
         }
+
+    publish("scan_update", {"id": scan_id, "status": "running", "progress": 0, "done": 0, "total": total, "project_id": project_id, "source": "subfinder", "subfinder_job_id": job_id})
 
     result_batch = []
     done_count = [0]
@@ -830,29 +842,28 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         hostname = r.get("hostname", "")
         scanned_hosts.append(hostname)
 
-        if r.get("is_mismatch") and not r.get("error"):
-            mismatch_scope = "same_domain" if r.get("same_base") else "different_domain"
-            alert_add(project_id, hostname, "SSL Mismatch",
-                      f"[Subfinder] CN '{r.get('cn','?')}' ≠ hostname", scan_id, mismatch_scope=mismatch_scope)
-        elif r.get("is_expired") and not r.get("error"):
-            alert_add(project_id, hostname, "Expired",
-                      f"[Subfinder] Expired {r.get('expiry','?')}", scan_id)
-        elif r.get("is_expiring_soon") and not r.get("error"):
-            alert_add(project_id, hostname, "Expiring Soon",
-                      f"[Subfinder] Expires {r.get('expiry','?')} ({r.get('days_left')}d)", scan_id)
+        alert = _build_alert_from_result(r, expiring_threshold)
 
         with lock:
+            if alert:
+                h, issue, detail, scope = alert
+                alert_add(project_id, h, issue, f"[Subfinder] {detail}", scan_id, mismatch_scope=scope)
+                publish("alert_update", {"unseen_count": alerts_unseen_count()})
             result_batch.append(r)
             done_count[0] += 1
+            cur = done_count[0]
             if len(result_batch) >= BATCH_SIZE:
                 batch = result_batch[:]
                 result_batch.clear()
                 results_batch_save(scan_id, project_id, batch)
-            if done_count[0] % PROGRESS_UPDATE_EVERY == 0:
-                scan_progress(scan_id, done_count[0])
+            if cur % PROGRESS_UPDATE_EVERY == 0 or alert:
+                scan_progress(scan_id, cur)
+                payload = {"id": scan_id, "status": "running", "progress": cur, "done": cur, "total": total, "project_id": project_id, "source": "subfinder", "subfinder_job_id": job_id}
                 with _scan_lock:
                     if scan_id in _scan_state:
-                        _scan_state[scan_id]["progress"] = done_count[0]
+                        _scan_state[scan_id].update({"progress": cur, "done": cur})
+                publish("scan_update", payload)
+            publish("scan_result", {"scan_id": scan_id, "project_id": project_id, "source": "subfinder", "row": r})
 
     try:
         # Reuse the scheduler-wide SSL worker cap instead of spawning a hard-coded
@@ -870,20 +881,33 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
             if result_batch:
                 results_batch_save(scan_id, project_id, result_batch)
 
+        publish("alert_update", {"unseen_count": alerts_unseen_count()})
         scan_finish(scan_id)
         subfinder_hosts_mark_scanned(project_id, scanned_hosts)
 
+        finished_at = datetime.now(timezone.utc).isoformat()
         with _scan_lock:
             if scan_id in _scan_state:
-                _scan_state[scan_id]["status"] = "done"
-                _scan_state[scan_id]["progress"] = total
+                _scan_state[scan_id].update({"status": "done", "progress": total, "done": done_count[0], "finished_at": finished_at})
+        publish("scan_update", {"id": scan_id, "status": "done", "progress": total, "done": done_count[0], "total": total, "project_id": project_id, "source": "subfinder", "subfinder_job_id": job_id, "finished_at": finished_at})
+
+        unsent = [a for a in alerts_unsent() if a["project_id"] == project_id and a.get("scan_id") == scan_id]
+        if unsent:
+            delivered = AlertManager(alert_settings_get()).dispatch(project.get("name") or f"project-{project_id[:8]}", unsent)
+            if delivered:
+                for a in unsent:
+                    alert_mark_sent(a["id"])
+            else:
+                log.warning("No remote alert channel accepted Subfinder SSL alerts for project '%s'; keeping alerts unsent for retry.", project.get("name"))
     except Exception as e:
         log.exception("Subfinder SSL scan failed for project=%s job=%s: %s", project_id, job_id, e)
         from db.database import scan_update
-        scan_update(scan_id, status="error", finished_at=datetime.now(timezone.utc).isoformat())
+        finished_at = datetime.now(timezone.utc).isoformat()
+        scan_update(scan_id, status="error", finished_at=finished_at)
         with _scan_lock:
             if scan_id in _scan_state:
-                _scan_state[scan_id]["status"] = "error"
+                _scan_state[scan_id].update({"status": "error", "finished_at": finished_at})
+        publish("scan_update", {"id": scan_id, "status": "error", "progress": done_count[0], "done": done_count[0], "total": total, "project_id": project_id, "source": "subfinder", "subfinder_job_id": job_id, "finished_at": finished_at, "error": str(e)})
         raise
 
 
