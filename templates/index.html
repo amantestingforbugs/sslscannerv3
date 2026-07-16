@@ -3472,7 +3472,7 @@ async function refreshSfPanel() {
 
     // State
     const state = st?.state||{};
-    const statusText = {running:'🔄 Running…',ssl_scanning:'🔒 SSL scanning new hosts…',done:'✅ Idle',error:'❌ Last run failed','':'🕐 Idle'}[state.status||'']||'—';
+    const statusText = {queued:'⏳ Queued…',running:'🔄 Enumerating…',ssl_scanning:'🔒 SSL scanning new hosts…',done:'✅ Idle',error:'❌ Last run failed','':'🕐 Idle'}[state.status||'']||'—';
     document.getElementById('sf-status-bar').textContent = `Status: ${statusText}`;
 
     // Toggle
@@ -3530,14 +3530,14 @@ async function refreshSfPanel() {
       document.getElementById('sf-pag-next').disabled = sfCurPage>=hostsData.pages;
     } else sfPag.style.display='none';
 
-  } catch {}
+  } catch (e) { toast(e.message || 'Unable to refresh Subfinder results', 'err'); }
 }
 
 async function runSfNow() {
   if (!sfCurPid) { toast('Please select a project before running scan','err'); return; }
   const { ok, data, error } = await fetch(`/api/projects/${sfCurPid}/subfinder/run`,{method:'POST'}).then(r=>r.json());
   if (!ok) { toast(error,'err'); return; }
-  toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found — check install)`,'ok');
+  toast(data?.binary_found ? `Subfinder started for ${data?.root_domain_count||0} root domains` : `Subfinder queued for ${data?.root_domain_count||0} root domains (binary not found — using passive sources only)`,'ok');
   setTimeout(refreshSfPanel, 2000);
 }
 

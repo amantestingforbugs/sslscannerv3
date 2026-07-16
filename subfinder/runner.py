@@ -747,10 +747,11 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
 
         with _sf_lock:
             _sf_state[project_id]["new_count"] = new_count
-            _sf_state[project_id]["status"] = "ssl_scanning" if scan_hosts else "done"
+            _sf_state[project_id]["status"] = "done"
+            _sf_state[project_id]["ssl_pending"] = len(scan_hosts)
 
         log.info(
-            "Subfinder: %d new hosts (%d pending SSL scans) for '%s'",
+            "Subfinder: %d new hosts (%d queued for SSL scans) for '%s'",
             new_count,
             len(scan_hosts),
             project["name"],
@@ -758,17 +759,15 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
         log_event(
             "subfinder",
             "info",
-            f"Discovered {new_count} new hosts; {len(scan_hosts)} pending SSL scans",
+            f"Discovered {new_count} new hosts; {len(scan_hosts)} queued for SSL scans",
             project_id=project_id,
             job_id=job_id,
-            status="running" if scan_hosts else "idle",
+            status="idle",
         )
 
         if scan_hosts:
-            _ssl_scan_subfinder_hosts(project_id, scan_hosts, job_id)
+            _start_subfinder_ssl_scan_async(project_id, scan_hosts, job_id)
 
-        with _sf_lock:
-            _sf_state[project_id]["status"] = "done"
         log_event("subfinder", "info", "Subfinder workflow completed", project_id=project_id, job_id=job_id, status="idle")
 
         return job_id
@@ -781,6 +780,26 @@ def run_subfinder_for_project(project_id: str, triggered_by: str = "scheduler") 
             if project_id in _sf_state:
                 _sf_state[project_id]["status"] = "error"
         return None
+
+
+def _start_subfinder_ssl_scan_async(project_id: str, hostnames: List[str], job_id: str) -> None:
+    """Start certificate scans for discovered hosts without blocking enumeration results."""
+    if not hostnames:
+        return
+
+    def worker():
+        try:
+            _ssl_scan_subfinder_hosts(project_id, hostnames, job_id)
+        except Exception:
+            # _ssl_scan_subfinder_hosts records the scan error; keep the
+            # enumeration job completed so users can still inspect discoveries.
+            log.exception("Background Subfinder SSL scan failed for project=%s job=%s", project_id, job_id)
+
+    threading.Thread(
+        target=worker,
+        daemon=True,
+        name=f"sf-ssl-{project_id[:8]}",
+    ).start()
 
 
 def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str):
