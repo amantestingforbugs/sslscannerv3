@@ -553,11 +553,11 @@ def run_subfinder(pid):
     root_domains = _extract_project_root_domains(hosts)
     if not root_domains:
         return err("No valid root domains could be extracted from this project host list")
-    started = run_subfinder_async(pid, triggered_by="manual")
+    started = run_subfinder_async(pid, triggered_by="manual", queue_if_busy=True)
     if not started:
-        return err("Subfinder already running for this project")
+        return err("Unable to queue Subfinder for this project")
     return ok({
-        "message": "Subfinder started",
+        "message": "Subfinder started or queued",
         "binary_found": subfinder_available(),
         "root_domains": root_domains,
         "root_domain_count": len(root_domains)

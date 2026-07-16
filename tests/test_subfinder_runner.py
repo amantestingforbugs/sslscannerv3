@@ -60,6 +60,37 @@ def test_run_subfinder_async_reserves_capacity_before_thread_starts(monkeypatch)
     assert runner.get_sf_state("project-one")["status"] == "queued"
 
 
+
+def test_manual_subfinder_run_queues_when_capacity_is_busy(monkeypatch):
+    import subfinder.runner as runner
+
+    monkeypatch.setattr(runner, "MAX_CONCURRENT_SUBFINDER_PROJECTS", 1)
+    with runner._sf_lock:
+        runner._sf_state.clear()
+        runner._sf_pending_manual_runs.clear()
+        runner._sf_state["busy-project"] = {"status": "running", "job_id": "job", "new_count": 0}
+
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            started_threads.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(runner.threading, "Thread", FakeThread)
+
+    assert runner.run_subfinder_async("manual-project", triggered_by="manual", queue_if_busy=True) is True
+    assert runner.run_subfinder_async("manual-project", triggered_by="manual", queue_if_busy=True) is True
+    assert len(started_threads) == 1
+    assert "manual-project" in runner._sf_pending_manual_runs
+
+    with runner._sf_lock:
+        runner._sf_state.clear()
+        runner._sf_pending_manual_runs.clear()
+
 def test_subfinder_scheduler_does_not_mark_due_project_run_when_capacity_full(monkeypatch):
     import subfinder.runner as runner
 
