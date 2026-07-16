@@ -399,6 +399,7 @@ body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{an
    TABLE
 ════════════════════════════════════════════════════════════ */
 .table-wrap{overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.scroll-chain-y{overscroll-behavior-y:auto;overflow-y:visible}
 table{width:100%;border-collapse:collapse}
 thead th{
   text-align:left;padding:10px 14px;
@@ -2123,11 +2124,11 @@ function canScrollInDirection(el, delta, axis = 'y') {
   return false;
 }
 
-function findScrollableAncestor(start, stopAt) {
+function findScrollableAncestor(start, stopAt, axis = 'y') {
   let node = start?.nodeType === Node.ELEMENT_NODE ? start : start?.parentElement;
   while (node && node !== document.body && node !== document.documentElement) {
     if (node === stopAt) return node;
-    if (isElementScrollable(node, 'y') || isElementScrollable(node, 'x')) return node;
+    if (isElementScrollable(node, axis)) return node;
     node = node.parentElement;
   }
   return null;
@@ -2139,13 +2140,11 @@ function installGlobalScrollProxy() {
     const appScroller = getScrollContainer();
     if (!appScroller) return;
     const target = event.target;
-    const localScroller = findScrollableAncestor(target, appScroller);
+    const dominantAxis = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? 'x' : 'y';
+    const dominantDelta = dominantAxis === 'x' ? event.deltaX : event.deltaY;
+    const localScroller = findScrollableAncestor(target, appScroller, dominantAxis);
 
-    if (localScroller && localScroller !== appScroller) {
-      const dominantAxis = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? 'x' : 'y';
-      const dominantDelta = dominantAxis === 'x' ? event.deltaX : event.deltaY;
-      if (canScrollInDirection(localScroller, dominantDelta, dominantAxis)) return;
-    }
+    if (localScroller && localScroller !== appScroller && canScrollInDirection(localScroller, dominantDelta, dominantAxis)) return;
 
     if (localScroller === appScroller && canScrollInDirection(appScroller, event.deltaY, 'y')) return;
     if (!canScrollInDirection(appScroller, event.deltaY, 'y')) return;
@@ -3504,7 +3503,7 @@ async function refreshSfPanel() {
     // Raw per-root run results
     const rawRows = rawResults || [];
     document.getElementById('sf-raw-results').innerHTML = rawRows.length ?
-      `<div class="table-wrap"><table><thead><tr><th>Root Domain</th><th>Status</th><th>Found</th><th>Results</th></tr></thead><tbody>`+
+      `<div class="table-wrap scroll-chain-y"><table><thead><tr><th>Root Domain</th><th>Status</th><th>Found</th><th>Results</th></tr></thead><tbody>`+
       rawRows.map(r=>{
         const lines = (r.raw_lines || []).map(h=>`<span class="badge" style="font-family:var(--mono);margin:2px">${esc(h)}</span>`).join('');
         const stderr = r.stderr_preview ? `<div style="color:var(--red);font-family:var(--mono);font-size:11px;margin-top:6px;white-space:pre-wrap">${esc(r.stderr_preview)}</div>` : '';
