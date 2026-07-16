@@ -463,22 +463,38 @@ def _normalize_host(host: str) -> str:
     h = (host or "").strip().lower().rstrip(".")
     if not h:
         return ""
-    if "://" in h:
+
+    # Project host lists may contain full URLs as well as bare hostnames.
+    # urlparse only exposes hostname for scheme/netloc URLs, so prefix bare
+    # URL-shaped values (example.com/path, //example.com/path) before parsing.
+    parse_target = h
+    if (
+        "://" not in parse_target
+        and not parse_target.startswith("//")
+        and any(sep in parse_target for sep in ("/", "?", "#"))
+    ):
+        parse_target = f"//{parse_target}"
+    if "://" in parse_target or parse_target.startswith("//"):
         try:
-            parsed = urlparse(h)
+            parsed = urlparse(parse_target)
             if parsed.hostname:
                 h = parsed.hostname
-            else:
+            elif "://" in h:
                 h = h.split("://", 1)[1].split("/", 1)[0]
+            else:
+                h = h.lstrip("/").split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
         except Exception:
-            h = h.split("://", 1)[1].split("/", 1)[0]
+            if "://" in h:
+                h = h.split("://", 1)[1].split("/", 1)[0]
+            else:
+                h = h.lstrip("/").split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
     if h.startswith("*."):
         h = h[2:]
     if h.startswith("[") and "]" in h:
         h = h[1:h.index("]")]
     elif ":" in h:
         h = h.split(":", 1)[0]
-    return h
+    return h.rstrip(".")
 
 
 def _registrable_domain(host: str) -> Optional[str]:

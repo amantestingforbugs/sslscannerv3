@@ -9,6 +9,8 @@ from subfinder.runner import _extract_project_root_domains, _normalize_host, _is
 
 def test_normalize_host_handles_urls_wildcards_and_ports():
     assert _normalize_host("https://API.Example.com:8443/v1") == "api.example.com"
+    assert _normalize_host("ads.xxt.com/path?from=project") == "ads.xxt.com"
+    assert _normalize_host("//xx.abc.com/login") == "xx.abc.com"
     assert _normalize_host("*.shop.example.org") == "shop.example.org"
     assert _normalize_host("foo.example.net:443") == "foo.example.net"
 
@@ -19,10 +21,12 @@ def test_extract_project_root_domains_from_mixed_input():
         "*.b.example.com",
         "c.example.net,d.example.net",
         "api.demo.co.uk;www.demo.co.uk",
+        "ads.xxt.com/path?from=project",
+        "//xx.abc.com/login",
         "invalid_host",
     ]
     roots = _extract_project_root_domains(hosts)
-    assert roots == ["demo.co.uk", "example.com", "example.net"]
+    assert roots == ["abc.com", "demo.co.uk", "example.com", "example.net", "xxt.com"]
 
 
 def test_is_host_within_root_requires_domain_boundary():
