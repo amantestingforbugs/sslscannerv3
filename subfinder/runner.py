@@ -39,6 +39,7 @@ log = logging.getLogger(__name__)
 SUBFINDER_BIN = shutil.which("subfinder") or "/usr/local/bin/subfinder"
 _sf_lock = threading.Lock()
 _sf_state = {}  # project_id -> {status, job_id, new_count}
+_sf_pending_manual_runs = set()  # project_ids with a queued manual retry waiting for capacity
 _subfinder_all_flag_supported: Optional[bool] = None
 MAX_CONCURRENT_SUBFINDER_PROJECTS = max(1, int(os.getenv("SUBFINDER_MAX_CONCURRENT_PROJECTS", "1")))
 ACTIVE_SUBFINDER_STATUSES = {"queued", "running", "ssl_scanning"}
@@ -1041,8 +1042,7 @@ def _ssl_scan_subfinder_hosts(project_id: str, hostnames: List[str], job_id: str
         raise
 
 
-def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
-    """Start subfinder pipeline in background thread. Returns False if at capacity."""
+def _reserve_subfinder_slot(project_id: str) -> bool:
     with _sf_lock:
         if _sf_state.get(project_id, {}).get("status") in ACTIVE_SUBFINDER_STATUSES:
             return False
@@ -1057,12 +1057,51 @@ def run_subfinder_async(project_id: str, triggered_by: str = "manual") -> bool:
         # worker has time to mark itself running, exhausting process threads
         # once their SSL scans begin.
         _sf_state[project_id] = {"status": "queued", "job_id": None, "new_count": 0}
+        return True
+
+
+def _run_subfinder_when_slot_available(project_id: str, triggered_by: str) -> None:
+    try:
+        while True:
+            if _reserve_subfinder_slot(project_id):
+                run_subfinder_for_project(project_id, triggered_by)
+                return
+            time.sleep(2)
+    finally:
+        with _sf_lock:
+            _sf_pending_manual_runs.discard(project_id)
+
+
+def run_subfinder_async(project_id: str, triggered_by: str = "manual", queue_if_busy: bool = False) -> bool:
+    """Start subfinder pipeline in background thread.
+
+    Returns False when the scan cannot start immediately.  When
+    queue_if_busy=True, a manual request is queued in a lightweight waiter
+    thread instead of surfacing a capacity or already-running error.
+    """
+    if _reserve_subfinder_slot(project_id):
+        t = threading.Thread(
+            target=run_subfinder_for_project,
+            args=(project_id, triggered_by),
+            daemon=True,
+            name=f"sf-{project_id[:8]}"
+        )
+        t.start()
+        return True
+
+    if not queue_if_busy:
+        return False
+
+    with _sf_lock:
+        if project_id in _sf_pending_manual_runs:
+            return True
+        _sf_pending_manual_runs.add(project_id)
 
     t = threading.Thread(
-        target=run_subfinder_for_project,
+        target=_run_subfinder_when_slot_available,
         args=(project_id, triggered_by),
         daemon=True,
-        name=f"sf-{project_id[:8]}"
+        name=f"sf-wait-{project_id[:8]}"
     )
     t.start()
     return True
